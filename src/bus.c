@@ -483,6 +483,7 @@ struct own_name_ud {
     gboolean handled;
     GMainLoop *loop;
     gboolean success;
+    guint owner_id;
 };
 
 static void own_name_ud_free(gpointer user_data)
@@ -514,7 +515,7 @@ static void name_acquired(GDBusConnection *conn,
     lua_pushvalue(L, -2);
     lua_pushvalue(L, -2);
 
-    lua_pushboolean(L, 1);
+    lua_pushinteger(L, own_name_ud->owner_id);
     ed_resume(L, 2);
 
     g_debug("after acquired callback");
@@ -563,20 +564,24 @@ static int easydbus_own_name(lua_State *L)
     own_name_ud->L = T = lua_newthread(L);
 
     if (!in_mainloop(state)) {
-        g_bus_own_name_on_connection(conn,
-                                 name,
-                                 G_BUS_NAME_OWNER_FLAGS_NONE,
-                                 name_acquired,
-                                 name_lost,
-                                 own_name_ud,
-                                 own_name_ud_free);
+        own_name_ud->owner_id =
+            g_bus_own_name_on_connection(conn,
+                                         name,
+                                         G_BUS_NAME_OWNER_FLAGS_NONE,
+                                         name_acquired,
+                                         name_lost,
+                                         own_name_ud,
+                                         own_name_ud_free);
 
         own_name_ud->loop = g_main_loop_new(NULL, FALSE);
         g_main_loop_run(own_name_ud->loop);
         g_main_loop_unref(own_name_ud->loop);
         own_name_ud->loop = NULL;
 
-        lua_pushboolean(L, own_name_ud->success ? 1 : 0);
+        if (own_name_ud->success)
+            lua_pushinteger(L, own_name_ud->owner_id);
+        else
+            lua_pushboolean(L, 0);
         return 1;
     }
 
@@ -590,13 +595,23 @@ static int easydbus_own_name(lua_State *L)
     lua_rawset(L, LUA_REGISTRYINDEX);
     lua_pop(L, 1);
 
-    g_bus_own_name_on_connection(conn,
-                                 name,
-                                 G_BUS_NAME_OWNER_FLAGS_NONE,
-                                 name_acquired,
-                                 name_lost,
-                                 own_name_ud,
-                                 own_name_ud_free);
+    own_name_ud->owner_id =
+        g_bus_own_name_on_connection(conn,
+                                     name,
+                                     G_BUS_NAME_OWNER_FLAGS_NONE,
+                                     name_acquired,
+                                     name_lost,
+                                     own_name_ud,
+                                     own_name_ud_free);
+
+    return 0;
+}
+
+static int easydbus_unown_name(lua_State *L)
+{
+    guint owner_id = luaL_checkinteger(L, 2);
+
+    g_bus_unown_name(owner_id);
 
     return 0;
 }
@@ -733,6 +748,7 @@ luaL_Reg bus_funcs[] = {
     {"introspect", easydbus_introspect},
     {"register_object", easydbus_register_object},
     {"own_name", easydbus_own_name},
+    {"unown_name", easydbus_unown_name},
     {"emit", easydbus_emit},
     {"subscribe", easydbus_subscribe},
     {NULL, NULL},
