@@ -434,7 +434,6 @@ static const GDBusInterfaceVTable interface_vtable = {
 
 static int easydbus_register_object(lua_State *L)
 {
-    int n_params = lua_gettop(L);
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
     const char *path = luaL_checkstring(L, 2);
@@ -454,8 +453,7 @@ static int easydbus_register_object(lua_State *L)
     interface_info = format_interface_info(L, 4, interface_name);
 
     /* Prepare method loopup table */
-    if (lua_gettop(L) != 4)
-        g_error("Top is not 4: %d", lua_gettop(L));
+    lua_settop(L, 4);
 
     obj_ud = g_new(struct object_ud, 1);
     obj_ud->ref = luaL_ref(L, LUA_REGISTRYINDEX);
