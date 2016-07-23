@@ -550,7 +550,7 @@ static void name_lost(GDBusConnection *conn,
     g_debug("after lost callback");
 }
 
-static int easydbus_request_name(lua_State *L)
+static int easydbus_own_name(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
@@ -734,7 +734,7 @@ luaL_Reg bus_funcs[] = {
     {"call", easydbus_call},
     {"introspect", easydbus_introspect},
     {"register_object", easydbus_register_object},
-    {"request_name", easydbus_request_name},
+    {"own_name", easydbus_own_name},
     {"emit", easydbus_emit},
     {"subscribe", easydbus_subscribe},
     {NULL, NULL},

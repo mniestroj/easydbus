@@ -26,15 +26,15 @@ function ed.mainloop(...)
    ed.bus.call = function(...)
       return yield(task(old_call, ...))
    end
-   local old_request_name = ed.bus.request_name
-   ed.bus.request_name = function(...)
-      return yield(task(old_request_name, ...))
+   local old_own_name = ed.bus.own_name
+   ed.bus.own_name = function(...)
+      return yield(task(old_own_name, ...))
    end
 
    local ret = {old_mainloop(...)}
 
    ed.bus.call = old_call
-   ed.bus.request_name = old_request_name
+   ed.bus.own_name = old_own_name
 
    return unpack(ret)
 end
@@ -167,6 +167,11 @@ end
 -- simpledbus-like signal emit
 function ed.bus.send_signal(bus, ...)
    return bus:emit(false, ...)
+end
+
+-- simpledbus-like request_name
+function ed.bus:request_name(...)
+   return self:own_name(...)
 end
 
 -- dbus types
