@@ -452,7 +452,7 @@ static int easydbus_register_object(lua_State *L)
 
     interface_info = format_interface_info(L, 4, interface_name);
 
-    /* Prepare method loopup table */
+    /* Prepare method lookup table */
     lua_settop(L, 4);
 
     obj_ud = g_new(struct object_ud, 1);
@@ -470,11 +470,25 @@ static int easydbus_register_object(lua_State *L)
     g_dbus_interface_info_unref(interface_info);
 
     if (!reg_id) {
-        g_warning("Error while registering object: %s", error->message);
-        g_clear_error(&error);
+        lua_pushnil(L);
+        lua_pushstring(L, error->message);
+        g_error_free(error);
+        return 2;
     }
 
-    lua_pushboolean(L, 1);
+    lua_pushinteger(L, reg_id);
+    return 1;
+}
+
+static int easydbus_unregister_object(lua_State *L)
+{
+    GDBusConnection *conn = get_conn(L, 1);
+    guint reg_id = luaL_checkinteger(L, 2);
+    gboolean ret;
+
+    ret = g_dbus_connection_unregister_object(conn, reg_id);
+
+    lua_pushboolean(L, ret ? 1 : 0);
     return 1;
 }
 
@@ -747,6 +761,7 @@ luaL_Reg bus_funcs[] = {
     {"call", easydbus_call},
     {"introspect", easydbus_introspect},
     {"register_object", easydbus_register_object},
+    {"unregister_object", easydbus_unregister_object},
     {"own_name", easydbus_own_name},
     {"unown_name", easydbus_unown_name},
     {"emit", easydbus_emit},
