@@ -7,13 +7,14 @@
 add_library(easydbus_core MODULE
     bus.c compat.c easydbus_lua.c poll.c utils.c)
 
-find_package(GLIB COMPONENTS gio gobject REQUIRED)
+find_package(GLIB COMPONENTS gio gio-unix gobject REQUIRED)
 
 find_package(Lua)
 
 include_directories(
     ${LUA_INCLUDE_DIR}
     ${GLIB_INCLUDE_DIRS}
+    ${GIO_UNIX_INCLUDE_DIRS}
 )
 
 target_link_libraries(easydbus_core LINK_PUBLIC

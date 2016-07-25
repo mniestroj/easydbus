@@ -31,7 +31,8 @@ static void call_callback(GObject *source, GAsyncResult *res, gpointer user_data
     lua_State *T = user_data;
     GDBusConnection *conn = lua_touserdata(T, 1);
     GError *error = NULL;
-    GVariant *result = g_dbus_connection_call_finish(conn, res, &error);
+    GUnixFDList *fd_list = NULL;
+    GVariant *result = g_dbus_connection_call_with_unix_fd_list_finish(conn, &fd_list, res, &error);
     int i;
     int n_args = lua_gettop(T);
 
@@ -51,8 +52,10 @@ static void call_callback(GObject *source, GAsyncResult *res, gpointer user_data
         g_assert(result != NULL);
 
         /* Resume Lua callback */
-        ed_resume(T, 1 + push_tuple(T, result));
+        ed_resume(T, 1 + push_tuple(T, result, fd_list));
 
+        if (fd_list)
+            g_object_unref(fd_list);
         g_variant_unref(result);
     } else {
         lua_pushnil(T);
@@ -98,6 +101,7 @@ static int easydbus_call(lua_State *L)
     lua_State *T;
     int i, n_args = lua_gettop(L);
     int n_params = n_args - 6;
+    GUnixFDList *fd_list = g_unix_fd_list_new();
 
     g_debug("%s: conn=%p bus_name=%s path=%s interface=%s method_name=%s sig=%s",
             __FUNCTION__, (void *) conn, bus_name, path, interface, method_name, sig);
@@ -110,21 +114,26 @@ static int easydbus_call(lua_State *L)
         GVariant *result;
         GError *error = NULL;
         int ret;
+        GUnixFDList *out_fd_list = NULL;
 
         if (n_params > 0)
-            params = range_to_tuple(L, 7, 7 + n_params, sig);
+            params = range_to_tuple(L, 7, 7 + n_params, sig, fd_list);
 
-        result = g_dbus_connection_call_sync(conn,
-                                    bus_name,
-                                    path,
-                                    interface,
-                                    method_name,
-                                    params,
-                                    NULL,
-                                    G_DBUS_CALL_FLAGS_NONE,
-                                    -1,
-                                    NULL,
-                                    &error);
+        result = g_dbus_connection_call_with_unix_fd_list_sync(conn,
+                                                               bus_name,
+                                                               path,
+                                                               interface,
+                                                               method_name,
+                                                               params,
+                                                               NULL,
+                                                               G_DBUS_CALL_FLAGS_NONE,
+                                                               -1,
+                                                               fd_list,
+                                                               &out_fd_list,
+                                                               NULL,
+                                                               &error);
+
+        g_object_unref(fd_list);
 
         if (error) {
             lua_pushnil(L);
@@ -134,7 +143,9 @@ static int easydbus_call(lua_State *L)
         }
 
         g_assert(result != NULL);
-        ret = push_tuple(L, result);
+        ret = push_tuple(L, result, out_fd_list);
+        if (out_fd_list)
+            g_object_unref(out_fd_list);
         g_variant_unref(result);
         return ret;
     }
@@ -163,7 +174,7 @@ static int easydbus_call(lua_State *L)
 
     /* Read parameters */
     if (n_params > 0)
-        params = range_to_tuple(L, 7, 7 + n_params, sig);
+        params = range_to_tuple(L, 7, 7 + n_params, sig, fd_list);
 
     g_dbus_connection_call(conn,
                            bus_name,
@@ -177,6 +188,8 @@ static int easydbus_call(lua_State *L)
                            NULL /* cancellable */,
                            call_callback,
                            T);
+
+    g_object_unref(fd_list);
 
     return 0;
 }
@@ -332,6 +345,7 @@ static int interface_method_return(lua_State *L)
     int i, n_args = lua_gettop(L);
     GVariant *result;
     const char *out_sig;
+    GUnixFDList *fd_list = g_unix_fd_list_new();
 
     lua_rawgeti(L, 1, 1);
     lua_rawgeti(L, 1, 2);
@@ -354,9 +368,11 @@ static int interface_method_return(lua_State *L)
             g_debug("arg %d type=%s", i, lua_typename(L, lua_type(L, i)));
     }
 
-    result = range_to_tuple(L, 2, n_args + 1, out_sig);
+    result = range_to_tuple(L, 2, n_args + 1, out_sig, fd_list);
 
-    g_dbus_method_invocation_return_value(invocation, result);
+    g_dbus_method_invocation_return_value_with_unix_fd_list(invocation, result, fd_list);
+
+    g_object_unref(fd_list);
 
     return 0;
 }
@@ -383,6 +399,8 @@ static void interface_method_call(GDBusConnection *connection,
     int n_args;
     int n_params;
     int i;
+    GDBusMessage *message;
+    GUnixFDList *fd_list;
 
     g_debug("%s: sender=%s path=%s interface_name=%s method_name=%s",
             __FUNCTION__, sender, path, interface_name, method_name);
@@ -406,7 +424,9 @@ static void interface_method_call(GDBusConnection *connection,
     }
 
     /* push params */
-    n_params = push_tuple(T, parameters);
+    message = g_dbus_method_invocation_get_message(invocation);
+    fd_list = g_dbus_message_get_unix_fd_list(message);
+    n_params = push_tuple(T, parameters, fd_list);
     lua_pushcclosure(T, interface_method_return, 0);
     lua_createtable(T, 2, 0);
     lua_pushlightuserdata(T, invocation);
@@ -649,7 +669,7 @@ static int easydbus_emit(lua_State *L)
     luaL_argcheck(L, g_variant_is_object_path(path), 3, "Invalid object path");
     luaL_argcheck(L, g_dbus_is_interface_name(interface_name), 4, "Invalid interface name");
 
-    params = range_to_tuple(L, 7, lua_gettop(L) + 1, sig);
+    params = range_to_tuple(L, 7, lua_gettop(L) + 1, sig, NULL);
 
     g_dbus_connection_emit_signal(conn,
                                   listener,
@@ -696,7 +716,7 @@ static void signal_callback(GDBusConnection *conn,
         lua_rawgeti(L, 1, i);
     }
 
-    ret = ed_resume(L, n_args + push_tuple(L, parameters) - 1);
+    ret = ed_resume(L, n_args + push_tuple(L, parameters, NULL) - 1);
     if (ret && ret != LUA_YIELD)
         g_warning("signal handler error: %s", lua_tostring(L, -1));
 
