@@ -6,6 +6,7 @@
 --  SPDX-License-Identifier: MIT
 --
 
+local posix = require 'posix'
 local dbus = require 'easydbus'
 
 local bus = dbus.session()
@@ -210,6 +211,13 @@ function test.pass_boolean()
    assert(bus:call(SERVICE, PATH, INTERFACE, 'PassBoolean', 'b', true) == true)
 end
 
+function test.get_fd()
+   local fd = assert(bus:call(SERVICE, PATH, INTERFACE, 'GetFD', 's', 'FdContent'))
+   posix.lseek(fd, 0, posix.SEEK_SET)
+   local content = posix.read(fd, 100)
+   assert(content == 'FdContent')
+end
+
 local function setup_client()
    for name,func in pairs(test) do
       print(string.rep('#', 20) .. ' Executing ' .. name .. ' ' .. string.rep('#', 20))
@@ -262,6 +270,11 @@ local function setup_service()
    service:add_method('PassByte', 'y', 'i', function(a) return a end)
    service:add_method('PassVariantByte', 'v', 'i', function(a) return a end)
    service:add_method('PassBoolean', 'b', 'b', function(a) return a end)
+   service:add_method('GetFD', 's', 'h', function(content)
+      local fd = posix.open('/tmp/dbus_test', bit32.bor(posix.O_CREAT, posix.O_RDWR), "0644")
+      posix.write(fd, content)
+      return fd
+   end)
    print('register_object:', bus:register_object(service))
 
    print('subscribe signal')
