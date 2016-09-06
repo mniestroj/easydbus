@@ -183,6 +183,10 @@ ed.type.byte = function(val)
    return ed.type(val, 'y')
 end
 
+ed.type.int16 = function(val)
+   return ed.type(val, 'n')
+end
+
 ed.type.uint32 = function(val)
    return ed.type(val, 'u')
 end

@@ -224,6 +224,9 @@ static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDLis
         case 'y':
             value = g_variant_new_byte(lua_tointeger(L, index));
             break;
+        case 'n':
+            value = g_variant_new_int16(lua_tointeger(L, index));
+            break;
         case 'i':
             value = g_variant_new_int32(lua_tointeger(L, index));
             break;
