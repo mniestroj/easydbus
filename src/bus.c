@@ -347,6 +347,7 @@ static int interface_method_return(lua_State *L)
     const char *out_sig;
     GUnixFDList *fd_list = g_unix_fd_list_new();
 
+    luaL_argcheck(L, lua_istable(L, 1), 1, "table expected");
     lua_rawgeti(L, 1, 1);
     lua_rawgeti(L, 1, 2);
     invocation = lua_touserdata(L, -2);
