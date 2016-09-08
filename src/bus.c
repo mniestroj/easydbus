@@ -458,7 +458,7 @@ static int easydbus_register_object(lua_State *L)
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
     const char *path = luaL_checkstring(L, 2);
-    const char *interface_name = luaL_checkstring(L, 3);;
+    const char *interface_name = luaL_checkstring(L, 3);
     GDBusInterfaceInfo *interface_info;
     GError *error = NULL;
     guint reg_id;
