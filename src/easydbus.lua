@@ -53,6 +53,7 @@ local function object_method_wrapper(func, ...)
    cb(arg, func(unpack(args)))
 end
 function object_mt:add_method(method_name, in_sig, out_sig, func, ...)
+   assert(func ~= nil, 'Method handler not specified')
    self.methods[method_name] = {in_sig, out_sig, object_method_wrapper, func, ...}
 end
 
