@@ -227,11 +227,23 @@ static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDLis
         case 'n':
             value = g_variant_new_int16(lua_tointeger(L, index));
             break;
+        case 'q':
+            value = g_variant_new_uint16(lua_tointeger(L, index));
+            break;
         case 'i':
             value = g_variant_new_int32(lua_tointeger(L, index));
             break;
         case 'u':
             value = g_variant_new_uint32(lua_tointeger(L, index));
+            break;
+        case 'x':
+            value = g_variant_new_int64(lua_tointeger(L, index));
+            break;
+        case 't':
+            value = g_variant_new_uint64(lua_tointeger(L, index));
+            break;
+        case 'd':
+            value = g_variant_new_double(lua_tonumber(L, index));
             break;
         case 'h':
             if (!fd_list)
@@ -259,6 +271,9 @@ static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDLis
             break;
         case '(':
             value = to_tuple(L, index, sig, fd_list);
+            break;
+        case 'v':
+            value = to_variant(L, index, sig, fd_list);
             break;
         default:
             luaL_error(L, "Unsupported output signature: %s", sig);
