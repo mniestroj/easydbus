@@ -179,17 +179,44 @@ end
 ed.type.__tostring = function(t)
    return "<dbus type '" .. t[2] .. "'> " .. t[1]
 end
-
+ed.type.boolean = function(val)
+   return ed.type(val, 'b')
+end
 ed.type.byte = function(val)
    return ed.type(val, 'y')
 end
-
 ed.type.int16 = function(val)
    return ed.type(val, 'n')
 end
-
+ed.type.uint16 = function(val)
+   return ed.type(val, 'q')
+end
+ed.type.int32 = function(val)
+   return ed.type(val, 'i')
+end
 ed.type.uint32 = function(val)
    return ed.type(val, 'u')
+end
+ed.type.int64 = function(val)
+   return ed.type(val, 'x')
+end
+ed.type.uint64 = function(val)
+   return ed.type(val, 't')
+end
+ed.type.double = function(val)
+   return ed.type(val, 'd')
+end
+ed.type.unix_fd = function(val)
+   return ed.type(val, 'h')
+end
+ed.type.string = function(val)
+   return ed.type(val, 's')
+end
+ed.type.object_path = function(val)
+   return ed.type(val, 'o')
+end
+ed.type.variant = function(val)
+   return ed.type(val, 'v')
 end
 
 return ed
