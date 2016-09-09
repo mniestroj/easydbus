@@ -62,10 +62,6 @@ describe('Method handlers return values', function()
    local owner_id
    local object
    local object_id
-   local value
-   local value_type
-   local return_value
-   local method_name
 
    before_each(function()
       bus = assert(dbus[bus_name]())
@@ -77,9 +73,9 @@ describe('Method handlers return values', function()
       bus:unown_name(owner_id)
    end)
 
-   local function post()
+   local function test(method_name, sig, value, return_value)
       local method_handler = spy.new(function() return return_value end)
-      object:add_method(method_name, '', value_type, method_handler)
+      object:add_method(method_name, '', sig, method_handler)
       object_id = assert(bus:register_object(object))
 
       local ret
@@ -95,196 +91,68 @@ describe('Method handlers return values', function()
       assert.is_true(bus:unregister_object(object_id))
    end
 
-   describe('Basic type', function()
-      local parent_post = post
-      local function post()
-         return_value = value
-      end
-
+   local function test_types(test)
       it('Return string', function()
-         value = 'returned string'
-         value_type = 's'
-         method_name = 'ReturnString'
-
-         post()
+         test('ReturnString', 's', 'returned string')
       end)
 
       it('Return byte', function()
-         value = 15
-         value_type = 'y'
-         method_name = 'ReturnByte'
-
-         post()
+         test('ReturnByte', 'y', 15)
       end)
 
       it('Return bool', function()
-         value = true
-         value_type = 'b'
-         method_name = 'ReturnBool'
-
-         post()
+         test('ReturnBool', 'b', true)
       end)
 
       it('Return int16', function()
-         value = -14
-         value_type = 'n'
-         method_name = 'ReturnInt16'
-
-         post()
+         test('ReturnInt16', 'n', -14)
       end)
 
       it('Return uint16', function()
-         value = 24
-         value_type = 'q'
-         method_name = 'ReturnUint16'
-
-         post()
+         test('ReturnUint16', 'q', 24)
       end)
 
       it('Return int32', function()
-         value = -124
-         value_type = 'i'
-         method_name = 'ReturnInt32'
-
-         post()
+         test('ReturnInt32', 'i', -124)
       end)
 
       it('Return uint32', function()
-         value = 211
-         value_type = 'u'
-         method_name = 'ReturnUint32'
-
-         post()
+         test('ReturnUint32', 'u', 211)
       end)
 
-      it('Return Int64', function()
-         value = -13124
-         value_type = 'x'
-         method_name = 'ReturnInt64'
-
-         post()
+      it('Return int64', function()
+         test('ReturnInt64', 'x', -13124)
       end)
 
-      it('Return Uint64', function()
-         value = 1124
-         value_type = 't'
-         method_name = 'ReturnUint64'
-
-         post()
+      it('Return uint64', function()
+         test('ReturnUint64', 't', 1124)
       end)
 
       it('Return double', function()
-         value = -142.2124415
-         value_type = 'd'
-         method_name = 'ReturnDouble'
-
-         post()
+         test('ReturnDouble', 'd', -142.2124415)
       end)
 
       it('Return variant', function()
-         value = 1242
-         value_type = 'v'
-         method_name = 'ReturnVariant'
-
-         post()
+         test('ReturnVariant', 'v', 1242)
       end)
+   end
+
+   describe('Basic type', function()
+      local parent_test = test
+      local function test(method_name, sig, value)
+         return parent_test(method_name, sig, value, value)
+      end
+
+      test_types(test)
    end)
 
    describe('Variant type', function()
-      local parent_post = post
-      local function post()
-         return_value = dbus.type(value, value_type)
-         value_type = 'v'
-         return parent_post()
+      local parent_test = test
+      local function test(method_name, sig, value)
+         return parent_test(method_name .. 'InVariant', 'v', value, dbus.type(value, sig))
       end
 
-      it('String', function()
-         value = 'returned val'
-         value_type = 's'
-         method_name = 'ReturnVariantString'
-
-         post()
-      end)
-
-            it('Return byte', function()
-         value = 15
-         value_type = 'y'
-         method_name = 'ReturnByte'
-
-         post()
-      end)
-
-      it('Return bool', function()
-         value = true
-         value_type = 'b'
-         method_name = 'ReturnBool'
-
-         post()
-      end)
-
-      it('Return int16', function()
-         value = -14
-         value_type = 'n'
-         method_name = 'ReturnInt16'
-
-         post()
-      end)
-
-      it('Return uint16', function()
-         value = 24
-         value_type = 'q'
-         method_name = 'ReturnUint16'
-
-         post()
-      end)
-
-      it('Return int32', function()
-         value = -124
-         value_type = 'i'
-         method_name = 'ReturnInt32'
-
-         post()
-      end)
-
-      it('Return uint32', function()
-         value = 211
-         value_type = 'u'
-         method_name = 'ReturnUint32'
-
-         post()
-      end)
-
-      it('Return Int64', function()
-         value = -13124
-         value_type = 'x'
-         method_name = 'ReturnInt64'
-
-         post()
-      end)
-
-      it('Return Uint64', function()
-         value = 1124
-         value_type = 't'
-         method_name = 'ReturnUint64'
-
-         post()
-      end)
-
-      it('Return double', function()
-         value = -142.2124415
-         value_type = 'd'
-         method_name = 'ReturnDouble'
-
-         post()
-      end)
-
-      it('Return variant', function()
-         value = 1242
-         value_type = 'v'
-         method_name = 'ReturnVariant'
-
-         post()
-      end)
+      test_types(test)
    end)
 end)
 
