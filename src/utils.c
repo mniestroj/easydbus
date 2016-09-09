@@ -213,10 +213,27 @@ static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDLis
     const char *str;
     gint handle;
     GError *error = NULL;
+    gboolean is_type = FALSE;
 
     g_debug("%s: index=%d sig=%s lua_type=%s", __FUNCTION__, index, sig, lua_typename(L, lua_type(L, index)));
 
     if (sig && sig[0] != 'v') {
+        if (ed_istype(L, index)) {
+            const char *val_type;
+
+            /* Check value type and signature */
+            lua_rawgeti(L, index, 2);
+            val_type = lua_tostring(L, -1);
+            if (g_strcmp0(val_type, sig) != 0)
+                luaL_error(L, "Value type (%s) is different than signature (%s)", val_type, sig);
+            lua_pop(L, 1);
+            is_type = TRUE;
+
+            /* Push value */
+            lua_rawgeti(L, index, 1);
+            index = lua_gettop(L);
+        }
+
         switch (sig[0]) {
         case 'b':
             value = g_variant_new_boolean(lua_toboolean(L, index));
@@ -308,6 +325,10 @@ static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDLis
         if (sig && sig[0] == 'v')
             value = g_variant_new_variant(value);
     }
+
+    /* Remove pushed value from type table */
+    if (is_type)
+        lua_pop(L, 1);
 
     return value;
 }
