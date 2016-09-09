@@ -28,6 +28,8 @@ static int type_mt;
 
 int ed_istype(lua_State *L, int index)
 {
+    int ret = 1;
+
     if (!lua_istable(L, index))
         return 0;
 
@@ -38,9 +40,11 @@ int ed_istype(lua_State *L, int index)
     lua_rawget(L, LUA_REGISTRYINDEX);
 
     if (!lua_equal(L, -1, -2))
-        return 0;
+        ret = 0;
 
-    return 1;
+    lua_pop(L, 2);
+
+    return ret;
 }
 
 static int ed_typecall(lua_State *L)
@@ -65,7 +69,7 @@ static int ed_typecall(lua_State *L)
         return 1;
     }
 
-    lua_pushboolean(L, ed_istype(L, 2) ? 1 : 0);
+    lua_pushboolean(L, ed_istype(L, 2));
     return 1;
 }
 
