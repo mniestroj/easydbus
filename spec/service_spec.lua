@@ -156,6 +156,15 @@ describe('Method handlers return values', function()
 
       test_types(test)
    end)
+
+   describe('Nested variant type', function()
+      local parent_test = test
+      local function test(method_name, sig, value)
+         return parent_test(method_name .. 'InNestedVariant', 'v', value, dbus.type.variant(dbus.type(value, sig)))
+      end
+
+      test_types(test)
+   end)
 end)
 
 describe('Invalid service creation', function()
