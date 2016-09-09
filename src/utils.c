@@ -275,6 +275,8 @@ static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDLis
             break;
         case 's':
             str = lua_tostring(L, index);
+            if (!str)
+                luaL_error(L, "string expected");
             value = g_variant_new_string(str);
             break;
         case 'o':
