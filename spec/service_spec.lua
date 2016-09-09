@@ -55,7 +55,7 @@ describe('Service creation', function()
       bus:unown_name(owner_id)
 
       assert.spy(dummy_handler).was.called()
-      assert.are.same(ret, pack())
+      assert.are.same(pack(), ret)
    end)
 end)
 
@@ -88,7 +88,7 @@ describe('Method handlers return values', function()
       dbus.mainloop()
 
       assert.spy(method_handler).was_called()
-      assert.are.same(ret, pack(value))
+      assert.are.same(pack(value), ret)
 
       assert.is_true(bus:unregister_object(object_id))
    end
