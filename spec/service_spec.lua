@@ -174,6 +174,41 @@ describe('Method handlers return values', function()
 
       test_types(test)
    end)
+
+   describe('Array of basic type', function()
+      local parent_test = test
+      local function test(method_name, sig, value)
+         local t = type(value)
+         if t == 'number' then
+            value = {
+               value,
+               value - 1,
+               value + 115,
+               value - 8,
+               value + 124,
+            }
+         elseif t == 'string' then
+            value = {
+               value,
+               value .. '_ssaaf',
+               value .. '_post2',
+               'pre1_' .. value,
+               'pre51_' .. value .. '_post124',
+            }
+         elseif t == 'boolean' then
+            value = {
+               value,
+               not value,
+               true,
+               false,
+            }
+         end
+         sig = 'a' .. sig
+         return parent_test(method_name .. 'InArray', sig, value, dbus.type(value, sig))
+      end
+
+      test_types(test)
+   end)
 end)
 
 describe('Invalid service creation', function()
