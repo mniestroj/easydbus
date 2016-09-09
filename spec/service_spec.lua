@@ -148,6 +148,15 @@ describe('Method handlers return values', function()
       test_types(test)
    end)
 
+   describe('Converted basic type', function()
+      local parent_test = test
+      local function test(method_name, sig, value)
+         return parent_test(method_name, sig, value, dbus.type(value, sig))
+      end
+
+      test_types(test)
+   end)
+
    describe('Variant type', function()
       local parent_test = test
       local function test(method_name, sig, value)
