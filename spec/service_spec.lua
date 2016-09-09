@@ -209,6 +209,41 @@ describe('Method handlers return values', function()
 
       test_types(test)
    end)
+
+   describe('Dictionary type', function()
+      local parent_test = test
+      local function test(method_name, sig, value)
+         local t = type(value)
+         if t == 'number' then
+            value = {
+               one = value - 2,
+               two = value + 102,
+               three = value - 7,
+               four = value + 24,
+            }
+         elseif t == 'string' then
+            value = {
+               one = value .. '22',
+               two = '33 ' .. value .. ' 44',
+               three = 'aaa' .. value,
+            }
+         elseif t == 'boolean' then
+            value = {
+               one = value,
+               two = not value,
+               three = true,
+               four = false,
+            }
+         end
+         local return_value = {}
+         for k,v in pairs(value) do
+            return_value[k] = dbus.type(v, sig)
+         end
+         return parent_test(method_name .. 'InDictionary', 'a{sv}', value, return_value)
+      end
+
+      test_types(test)
+   end)
 end)
 
 describe('Invalid service creation', function()
