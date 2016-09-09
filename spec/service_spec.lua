@@ -1,3 +1,5 @@
+#!/usr/bin/env lua
+
 require 'busted.runner'()
 
 local dbus = require 'easydbus'
