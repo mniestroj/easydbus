@@ -383,6 +383,18 @@ struct object_ud {
     int ref;
 };
 
+static void object_ud_free(gpointer user_data)
+{
+    struct object_ud *obj_ud = user_data;
+    struct easydbus_state *state = obj_ud->state;
+
+    g_debug("%s: %p", __FUNCTION__, user_data);
+
+    luaL_unref(state->L, LUA_REGISTRYINDEX, obj_ud->ref);
+
+    g_free(user_data);
+}
+
 static void interface_method_call(GDBusConnection *connection,
                                   const gchar *sender,
                                   const gchar *path,
@@ -485,7 +497,7 @@ static int easydbus_register_object(lua_State *L)
                                                interface_info,
                                                &interface_vtable,
                                                obj_ud, /* user_data */
-                                               g_free, /* user_data free function */
+                                               object_ud_free,
                                                &error);
 
     g_dbus_interface_info_unref(interface_info);
@@ -731,21 +743,6 @@ static void signal_callback(GDBusConnection *conn,
         g_warning("signal handler error: %s", lua_tostring(L, -1));
 
     lua_pop(state->L, 1);
-}
-
-static void object_ud_free(gpointer user_data)
-{
-    struct object_ud *obj_ud = user_data;
-    struct easydbus_state *state = obj_ud->state;
-    lua_State *L = state->L;
-    int ref = obj_ud->ref;
-
-    g_debug("%s: %p", __FUNCTION__, user_data);
-
-    lua_pushnil(L);
-    luaL_unref(L, LUA_REGISTRYINDEX, ref);
-
-    g_free(user_data);
 }
 
 static int easydbus_subscribe(lua_State *L)
