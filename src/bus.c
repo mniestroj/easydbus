@@ -514,6 +514,7 @@ static int easydbus_unregister_object(lua_State *L)
 }
 
 struct own_name_ud {
+    struct easydbus_state *state;
     lua_State *L;
     gboolean handled;
     GMainLoop *loop;
@@ -523,7 +524,14 @@ struct own_name_ud {
 
 static void own_name_ud_free(gpointer user_data)
 {
-    /* TODO: remove Lua thread from registry */
+    struct own_name_ud *own_name_ud = user_data;
+    struct easydbus_state *state = own_name_ud->state;
+    lua_State *L = own_name_ud->L;
+
+    lua_pushlightuserdata(state->L, L);
+    lua_pushnil(state->L);
+    lua_rawset(state->L, LUA_REGISTRYINDEX);
+
     g_free(user_data);
 }
 
@@ -596,6 +604,7 @@ static int easydbus_own_name(lua_State *L)
     g_debug("%s", __FUNCTION__);
 
     own_name_ud = g_new0(struct own_name_ud, 1);
+    own_name_ud->state = state;
     own_name_ud->L = T = lua_newthread(L);
 
     if (!in_mainloop(state)) {
