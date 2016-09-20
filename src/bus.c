@@ -752,6 +752,8 @@ static int easydbus_subscribe(lua_State *L)
     struct object_ud *obj_ud = g_new(struct object_ud, 1);
     int i;
 
+    luaL_argcheck(L, !lua_isnoneornil(L, 6), 6, "Signal handler not specified");
+
     g_debug("%s", __FUNCTION__);
 
     lua_createtable(L, n_params - 5, 0);
