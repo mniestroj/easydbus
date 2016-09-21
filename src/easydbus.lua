@@ -4,7 +4,7 @@
 --  SPDX-License-Identifier: MIT
 --
 
-local ed = require 'easydbus.core'
+local dbus = require 'easydbus.core'
 
 -- utils
 local resume = coroutine.resume
@@ -20,21 +20,21 @@ local function task(func, ...)
    func(unpack(args))
 end
 
-local old_mainloop = ed.mainloop
-function ed.mainloop(...)
-   local old_call = ed.bus.call
-   ed.bus.call = function(...)
+local old_mainloop = dbus.mainloop
+function dbus.mainloop(...)
+   local old_call = dbus.bus.call
+   dbus.bus.call = function(...)
       return yield(task(old_call, ...))
    end
-   local old_own_name = ed.bus.own_name
-   ed.bus.own_name = function(...)
+   local old_own_name = dbus.bus.own_name
+   dbus.bus.own_name = function(...)
       return yield(task(old_own_name, ...))
    end
 
    local ret = {old_mainloop(...)}
 
-   ed.bus.call = old_call
-   ed.bus.own_name = old_own_name
+   dbus.bus.call = old_call
+   dbus.bus.own_name = old_own_name
 
    return unpack(ret)
 end
@@ -70,7 +70,7 @@ end
 
 setmetatable(object_mt, {__call = create_object})
 
-ed.object = object_mt
+dbus.object = object_mt
 
 -- EObject
 local EObject_mt = {}
@@ -95,10 +95,10 @@ end
 
 setmetatable(EObject_mt, {__call = create_EObject})
 
-ed.EObject = EObject_mt
+dbus.EObject = EObject_mt
 
-local old_register_object = ed.bus.register_object
-function ed.bus:register_object(object)
+local old_register_object = dbus.bus.register_object
+function dbus.bus:register_object(object)
    local mt = getmetatable(object)
    if mt == object_mt then
       return old_register_object(self, object.path, object.interface, object.methods)
@@ -114,8 +114,8 @@ function ed.bus:register_object(object)
 end
 
 -- add_callback
-local old_add_callback = ed.add_callback
-function ed.add_callback(func, ...)
+local old_add_callback = dbus.add_callback
+function dbus.add_callback(func, ...)
    old_add_callback(
       function(...)
          local status, err = xpcall(func, debug.traceback, ...)
@@ -140,7 +140,7 @@ function proxy_mt.add_method(proxy, method_name, interface_name, sig)
    end
 end
 
-function ed.bus:new_proxy(service, object_path)
+function dbus.bus:new_proxy(service, object_path)
    local proxy = {
       _bus = self,
       _service = service,
@@ -151,72 +151,72 @@ function ed.bus:new_proxy(service, object_path)
 end
 
 -- simpledbus-like names
-ed.SystemBus = ed.system
-ed.SessionBus = ed.session
+dbus.SystemBus = dbus.system
+dbus.SessionBus = dbus.session
 
 -- simpledbus-like signal handling
-function ed.bus.register_signal(bus, ...)
+function dbus.bus.register_signal(bus, ...)
    bus:subscribe(false, ...)
    return true
 end
 
-function ed.bus.unregister_signal(bus, ...)
+function dbus.bus.unregister_signal(bus, ...)
    -- dummy function
    return true
 end
 
 -- simpledbus-like signal emit
-function ed.bus.send_signal(bus, ...)
+function dbus.bus.send_signal(bus, ...)
    return bus:emit(false, ...)
 end
 
 -- simpledbus-like request_name
-function ed.bus:request_name(...)
+function dbus.bus:request_name(...)
    return self:own_name(...)
 end
 
 -- dbus types
-ed.type.__tostring = function(t)
+dbus.type.__tostring = function(t)
    return "<dbus type '" .. t[2] .. "'> " .. t[1]
 end
-ed.type.boolean = function(val)
-   return ed.type(val, 'b')
+dbus.type.boolean = function(val)
+   return dbus.type(val, 'b')
 end
-ed.type.byte = function(val)
-   return ed.type(val, 'y')
+dbus.type.byte = function(val)
+   return dbus.type(val, 'y')
 end
-ed.type.int16 = function(val)
-   return ed.type(val, 'n')
+dbus.type.int16 = function(val)
+   return dbus.type(val, 'n')
 end
-ed.type.uint16 = function(val)
-   return ed.type(val, 'q')
+dbus.type.uint16 = function(val)
+   return dbus.type(val, 'q')
 end
-ed.type.int32 = function(val)
-   return ed.type(val, 'i')
+dbus.type.int32 = function(val)
+   return dbus.type(val, 'i')
 end
-ed.type.uint32 = function(val)
-   return ed.type(val, 'u')
+dbus.type.uint32 = function(val)
+   return dbus.type(val, 'u')
 end
-ed.type.int64 = function(val)
-   return ed.type(val, 'x')
+dbus.type.int64 = function(val)
+   return dbus.type(val, 'x')
 end
-ed.type.uint64 = function(val)
-   return ed.type(val, 't')
+dbus.type.uint64 = function(val)
+   return dbus.type(val, 't')
 end
-ed.type.double = function(val)
-   return ed.type(val, 'd')
+dbus.type.double = function(val)
+   return dbus.type(val, 'd')
 end
-ed.type.unix_fd = function(val)
-   return ed.type(val, 'h')
+dbus.type.unix_fd = function(val)
+   return dbus.type(val, 'h')
 end
-ed.type.string = function(val)
-   return ed.type(val, 's')
+dbus.type.string = function(val)
+   return dbus.type(val, 's')
 end
-ed.type.object_path = function(val)
-   return ed.type(val, 'o')
+dbus.type.object_path = function(val)
+   return dbus.type(val, 'o')
 end
-ed.type.variant = function(val)
-   return ed.type(val, 'v')
+dbus.type.variant = function(val)
+   return dbus.type(val, 'v')
 end
 
-return ed
+return dbus
