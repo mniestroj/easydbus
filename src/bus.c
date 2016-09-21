@@ -80,7 +80,7 @@ static inline gboolean in_mainloop(struct easydbus_state *state)
  * Args:
  * 1) conn
  * 2) bus_name
- * 3) path
+ * 3) object_path
  * 4) interface_name
  * 5) method_name
  * 6) parameters ...
@@ -93,7 +93,7 @@ static int bus_call(lua_State *L)
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
     const char *bus_name = luaL_checkstring(L, 2);
-    const char *path = luaL_checkstring(L, 3);
+    const char *object_path = luaL_checkstring(L, 3);
     const char *interface_name = luaL_checkstring(L, 4);
     const char *method_name = luaL_checkstring(L, 5);
     const char *sig = lua_tostring(L, 6);
@@ -103,11 +103,11 @@ static int bus_call(lua_State *L)
     int n_params = n_args - 6;
     GUnixFDList *fd_list = g_unix_fd_list_new();
 
-    g_debug("%s: conn=%p bus_name=%s path=%s interface_name=%s method_name=%s sig=%s",
-            __FUNCTION__, (void *) conn, bus_name, path, interface_name, method_name, sig);
+    g_debug("%s: conn=%p bus_name=%s object_path=%s interface_name=%s method_name=%s sig=%s",
+            __FUNCTION__, (void *) conn, bus_name, object_path, interface_name, method_name, sig);
 
     luaL_argcheck(L, g_dbus_is_name(bus_name), 2, "Invalid bus name");
-    luaL_argcheck(L, g_variant_is_object_path(path), 3, "Invalid object path");
+    luaL_argcheck(L, g_variant_is_object_path(object_path), 3, "Invalid object path");
     luaL_argcheck(L, g_dbus_is_interface_name(interface_name), 4, "Invalid interface name");
 
     if (!in_mainloop(state)) {
@@ -121,7 +121,7 @@ static int bus_call(lua_State *L)
 
         result = g_dbus_connection_call_with_unix_fd_list_sync(conn,
                                                                bus_name,
-                                                               path,
+                                                               object_path,
                                                                interface_name,
                                                                method_name,
                                                                params,
@@ -178,7 +178,7 @@ static int bus_call(lua_State *L)
 
     g_dbus_connection_call(conn,
                            bus_name,
-                           path,
+                           object_path,
                            interface_name,
                            method_name,
                            params, /* parameters */
@@ -199,7 +199,7 @@ static int bus_introspect(lua_State *L)
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
     const char *bus_name = luaL_checkstring(L, 2);
-    const char *path = luaL_checkstring(L, 3);
+    const char *object_path = luaL_checkstring(L, 3);
     const gchar *xml_data;
     GDBusNodeInfo *node;
     GVariant *result;
@@ -209,7 +209,7 @@ static int bus_introspect(lua_State *L)
 
     result = g_dbus_connection_call_sync(conn,
                                          bus_name,
-                                         path,
+                                         object_path,
                                          "org.freedesktop.DBus.Introspectable",
                                          "Introspect",
                                          NULL,
@@ -339,7 +339,7 @@ static int interface_method_return(lua_State *L)
 {
     GDBusMethodInvocation *invocation;
     const gchar *sender;
-    const gchar *path;
+    const gchar *object_path;
     const gchar *interface_name;
     const gchar *method_name;
     int i, n_args = lua_gettop(L);
@@ -355,12 +355,12 @@ static int interface_method_return(lua_State *L)
     lua_pop(L, 2);
 
     sender = g_dbus_method_invocation_get_sender(invocation);
-    path = g_dbus_method_invocation_get_object_path(invocation);
+    object_path = g_dbus_method_invocation_get_object_path(invocation);
     interface_name = g_dbus_method_invocation_get_interface_name(invocation);
     method_name = g_dbus_method_invocation_get_method_name(invocation);
 
-    g_debug("%s: sender=%s path=%s interface_name=%s method_name=%s out_sig=%s",
-            __FUNCTION__, sender, path, interface_name, method_name, out_sig);
+    g_debug("%s: sender=%s object_path=%s interface_name=%s method_name=%s out_sig=%s",
+            __FUNCTION__, sender, object_path, interface_name, method_name, out_sig);
 
     for (i = 2; i <= n_args; i++) {
         if (lua_type(L, i) == LUA_TSTRING)
@@ -397,7 +397,7 @@ static void object_ud_free(gpointer user_data)
 
 static void interface_method_call(GDBusConnection *connection,
                                   const gchar *sender,
-                                  const gchar *path,
+                                  const gchar *object_path,
                                   const gchar *interface_name,
                                   const gchar *method_name,
                                   GVariant *parameters,
@@ -415,8 +415,8 @@ static void interface_method_call(GDBusConnection *connection,
     GDBusMessage *message;
     GUnixFDList *fd_list;
 
-    g_debug("%s: sender=%s path=%s interface_name=%s method_name=%s",
-            __FUNCTION__, sender, path, interface_name, method_name);
+    g_debug("%s: sender=%s object_path=%s interface_name=%s method_name=%s",
+            __FUNCTION__, sender, object_path, interface_name, method_name);
 
     T = lua_newthread(state->L);
 
@@ -469,7 +469,7 @@ static int bus_register_object(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
-    const char *path = luaL_checkstring(L, 2);
+    const char *object_path = luaL_checkstring(L, 2);
     const char *interface_name = luaL_checkstring(L, 3);
     GDBusInterfaceInfo *interface_info;
     GError *error = NULL;
@@ -479,7 +479,7 @@ static int bus_register_object(lua_State *L)
     struct object_ud *obj_ud;
 
     g_debug("%s", __FUNCTION__);
-    g_debug("path=%s interface_name=%s", path, interface_name);
+    g_debug("object_path=%s interface_name=%s", object_path, interface_name);
 
     luaL_argcheck(L, lua_istable(L, 4), 4, "Is not a table");
 
@@ -493,7 +493,7 @@ static int bus_register_object(lua_State *L)
     obj_ud->state = state;
 
     reg_id = g_dbus_connection_register_object(conn,
-                                               path,
+                                               object_path,
                                                interface_info,
                                                &interface_vtable,
                                                obj_ud, /* user_data */
@@ -676,26 +676,26 @@ static int bus_emit(lua_State *L)
 {
     GDBusConnection *conn = get_conn(L, 1);
     const char *listener = lua_tostring(L, 2);
-    const char *path = luaL_checkstring(L, 3);
+    const char *object_path = luaL_checkstring(L, 3);
     const char *interface_name = luaL_checkstring(L, 4);
     const char *signal_name = luaL_checkstring(L, 5);
     const char *sig = lua_tostring(L, 6);
     GVariant *params;
     GError *error = NULL;
 
-    g_debug("%s: listener=%s path=%s interface_name=%s signal_name=%s sig=%s",
-            __FUNCTION__, listener, path, interface_name, signal_name, sig);
+    g_debug("%s: listener=%s object_path=%s interface_name=%s signal_name=%s sig=%s",
+            __FUNCTION__, listener, object_path, interface_name, signal_name, sig);
 
     if (listener)
         luaL_argcheck(L, g_dbus_is_name(listener), 2, "Invalid listener name");
-    luaL_argcheck(L, g_variant_is_object_path(path), 3, "Invalid object path");
+    luaL_argcheck(L, g_variant_is_object_path(object_path), 3, "Invalid object path");
     luaL_argcheck(L, g_dbus_is_interface_name(interface_name), 4, "Invalid interface name");
 
     params = range_to_tuple(L, 7, lua_gettop(L) + 1, sig, NULL);
 
     g_dbus_connection_emit_signal(conn,
                                   listener,
-                                  path,
+                                  object_path,
                                   interface_name,
                                   signal_name,
                                   params,
@@ -750,7 +750,7 @@ static int bus_subscribe(lua_State *L)
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
     const char *sender = lua_tostring(L, 2);
-    const char *path = lua_tostring(L, 3);
+    const char *object_path = lua_tostring(L, 3);
     const char *interface_name = lua_tostring(L, 4);
     const char *signal_name = lua_tostring(L, 5);
     int n_params = lua_gettop(L);
@@ -777,7 +777,7 @@ static int bus_subscribe(lua_State *L)
                                                 sender,
                                                 interface_name,
                                                 signal_name,
-                                                path,
+                                                object_path,
                                                 NULL, /* arg0 */
                                                 G_DBUS_SIGNAL_FLAGS_NONE,
                                                 signal_callback,
