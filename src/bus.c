@@ -88,7 +88,7 @@ static inline gboolean in_mainloop(struct easydbus_state *state)
  * last-1) callback
  * last) callback_arg
  */
-static int easydbus_call(lua_State *L)
+static int bus_call(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
@@ -194,7 +194,7 @@ static int easydbus_call(lua_State *L)
     return 0;
 }
 
-static int easydbus_introspect(lua_State *L)
+static int bus_introspect(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
@@ -465,7 +465,7 @@ static const GDBusInterfaceVTable interface_vtable = {
     {0}
 };
 
-static int easydbus_register_object(lua_State *L)
+static int bus_register_object(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
@@ -513,7 +513,7 @@ static int easydbus_register_object(lua_State *L)
     return 1;
 }
 
-static int easydbus_unregister_object(lua_State *L)
+static int bus_unregister_object(lua_State *L)
 {
     GDBusConnection *conn = get_conn(L, 1);
     guint reg_id = luaL_checkinteger(L, 2);
@@ -604,7 +604,7 @@ static void name_lost(GDBusConnection *conn,
     g_debug("after lost callback");
 }
 
-static int easydbus_own_name(lua_State *L)
+static int bus_own_name(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
@@ -663,7 +663,7 @@ static int easydbus_own_name(lua_State *L)
     return 0;
 }
 
-static int easydbus_unown_name(lua_State *L)
+static int bus_unown_name(lua_State *L)
 {
     guint owner_id = luaL_checkinteger(L, 2);
 
@@ -672,7 +672,7 @@ static int easydbus_unown_name(lua_State *L)
     return 0;
 }
 
-static int easydbus_emit(lua_State *L)
+static int bus_emit(lua_State *L)
 {
     GDBusConnection *conn = get_conn(L, 1);
     const char *listener = lua_tostring(L, 2);
@@ -745,7 +745,7 @@ static void signal_callback(GDBusConnection *conn,
     lua_pop(state->L, 1);
 }
 
-static int easydbus_subscribe(lua_State *L)
+static int bus_subscribe(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
@@ -788,7 +788,7 @@ static int easydbus_subscribe(lua_State *L)
     return 1;
 }
 
-static int easydbus_unsubscribe(lua_State *L)
+static int bus_unsubscribe(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
@@ -802,15 +802,15 @@ static int easydbus_unsubscribe(lua_State *L)
 }
 
 luaL_Reg bus_funcs[] = {
-    {"call", easydbus_call},
-    {"introspect", easydbus_introspect},
-    {"register_object", easydbus_register_object},
-    {"unregister_object", easydbus_unregister_object},
-    {"own_name", easydbus_own_name},
-    {"unown_name", easydbus_unown_name},
-    {"emit", easydbus_emit},
-    {"subscribe", easydbus_subscribe},
-    {"unsubscribe", easydbus_unsubscribe},
+    {"call", bus_call},
+    {"introspect", bus_introspect},
+    {"register_object", bus_register_object},
+    {"unregister_object", bus_unregister_object},
+    {"own_name", bus_own_name},
+    {"unown_name", bus_unown_name},
+    {"emit", bus_emit},
+    {"subscribe", bus_subscribe},
+    {"unsubscribe", bus_unsubscribe},
     {NULL, NULL},
 };
 
