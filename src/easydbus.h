@@ -24,4 +24,4 @@ struct easydbus_state {
     lua_State *L;
 };
 
-int ed_istype(lua_State *L, int index);
+int easydbus_is_dbus_type(lua_State *L, int index);

@@ -215,7 +215,7 @@ static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDLis
     g_debug("%s: index=%d sig=%s lua_type=%s", __FUNCTION__, index, sig, lua_typename(L, lua_type(L, index)));
 
     if (sig && sig[0] != 'v') {
-        if (ed_istype(L, index)) {
+        if (easydbus_is_dbus_type(L, index)) {
             const char *val_type;
 
             /* Check value type and signature */
@@ -306,7 +306,7 @@ static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDLis
             value = g_variant_new_string(lua_tostring(L, index));
             break;
         case LUA_TTABLE:
-            if (ed_istype(L, index)) {
+            if (easydbus_is_dbus_type(L, index)) {
                 lua_rawgeti(L, index, 2);
                 lua_rawgeti(L, index, 1);
                 value = to_variant(L, lua_gettop(L), lua_tostring(L, -2), fd_list);

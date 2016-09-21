@@ -26,7 +26,7 @@
 static int type_mt;
 #define TYPE_MT ((void *) &type_mt)
 
-int ed_istype(lua_State *L, int index)
+int easydbus_is_dbus_type(lua_State *L, int index)
 {
     int ret = 1;
 
@@ -69,7 +69,7 @@ static int ed_typecall(lua_State *L)
         return 1;
     }
 
-    lua_pushboolean(L, ed_istype(L, 2));
+    lua_pushboolean(L, easydbus_is_dbus_type(L, 2));
     return 1;
 }
 
