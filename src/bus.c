@@ -196,7 +196,6 @@ static int bus_call(lua_State *L)
 
 static int bus_introspect(lua_State *L)
 {
-    struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
     const char *bus_name = luaL_checkstring(L, 2);
     const char *object_path = luaL_checkstring(L, 3);
@@ -312,7 +311,6 @@ static GDBusInterfaceInfo *format_interface_info(lua_State *L, int index,
 {
     GDBusInterfaceInfo *interface_info;
     GPtrArray *methods = g_ptr_array_new();
-    GDBusMethodInfo **ret;
 
     lua_pushnil(L);
     while (lua_next(L, index) != 0) {
@@ -474,8 +472,6 @@ static int bus_register_object(lua_State *L)
     GDBusInterfaceInfo *interface_info;
     GError *error = NULL;
     guint reg_id;
-    int i;
-    int arg_num;
     struct object_ud *obj_ud;
 
     g_debug("%s", __FUNCTION__);
@@ -754,7 +750,6 @@ static int bus_subscribe(lua_State *L)
     const char *interface_name = lua_tostring(L, 4);
     const char *signal_name = lua_tostring(L, 5);
     int n_params = lua_gettop(L);
-    GError *error = NULL;
     struct object_ud *obj_ud = g_new(struct object_ud, 1);
     guint ref_id;
     int i;
@@ -790,7 +785,6 @@ static int bus_subscribe(lua_State *L)
 
 static int bus_unsubscribe(lua_State *L)
 {
-    struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
     guint ref_id = luaL_checkinteger(L, 2);
 

@@ -205,10 +205,7 @@ static GVariant *to_array(lua_State *L, int index, const char *sig, GUnixFDList 
 
 static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDList *fd_list)
 {
-    GVariantBuilder elem_builder;
-    int i;
     int n_arr;
-    char *elem_sig;
     GVariant *value = NULL;
     const char *str;
     gint handle;
