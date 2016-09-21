@@ -81,7 +81,7 @@ static inline gboolean in_mainloop(struct easydbus_state *state)
  * 1) conn
  * 2) bus_name
  * 3) path
- * 4) interface
+ * 4) interface_name
  * 5) method_name
  * 6) parameters ...
  * last-2) timeout
@@ -94,7 +94,7 @@ static int bus_call(lua_State *L)
     GDBusConnection *conn = get_conn(L, 1);
     const char *bus_name = luaL_checkstring(L, 2);
     const char *path = luaL_checkstring(L, 3);
-    const char *interface = luaL_checkstring(L, 4);
+    const char *interface_name = luaL_checkstring(L, 4);
     const char *method_name = luaL_checkstring(L, 5);
     const char *sig = lua_tostring(L, 6);
     GVariant *params = NULL;
@@ -103,12 +103,12 @@ static int bus_call(lua_State *L)
     int n_params = n_args - 6;
     GUnixFDList *fd_list = g_unix_fd_list_new();
 
-    g_debug("%s: conn=%p bus_name=%s path=%s interface=%s method_name=%s sig=%s",
-            __FUNCTION__, (void *) conn, bus_name, path, interface, method_name, sig);
+    g_debug("%s: conn=%p bus_name=%s path=%s interface_name=%s method_name=%s sig=%s",
+            __FUNCTION__, (void *) conn, bus_name, path, interface_name, method_name, sig);
 
     luaL_argcheck(L, g_dbus_is_name(bus_name), 2, "Invalid bus name");
     luaL_argcheck(L, g_variant_is_object_path(path), 3, "Invalid object path");
-    luaL_argcheck(L, g_dbus_is_interface_name(interface), 4, "Invalid interface name");
+    luaL_argcheck(L, g_dbus_is_interface_name(interface_name), 4, "Invalid interface name");
 
     if (!in_mainloop(state)) {
         GVariant *result;
@@ -122,7 +122,7 @@ static int bus_call(lua_State *L)
         result = g_dbus_connection_call_with_unix_fd_list_sync(conn,
                                                                bus_name,
                                                                path,
-                                                               interface,
+                                                               interface_name,
                                                                method_name,
                                                                params,
                                                                NULL,
@@ -179,7 +179,7 @@ static int bus_call(lua_State *L)
     g_dbus_connection_call(conn,
                            bus_name,
                            path,
-                           interface,
+                           interface_name,
                            method_name,
                            params, /* parameters */
                            NULL, /* reply_type */
