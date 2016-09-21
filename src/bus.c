@@ -756,6 +756,7 @@ static int easydbus_subscribe(lua_State *L)
     int n_params = lua_gettop(L);
     GError *error = NULL;
     struct object_ud *obj_ud = g_new(struct object_ud, 1);
+    guint ref_id;
     int i;
 
     luaL_argcheck(L, !lua_isnoneornil(L, 6), 6, "Signal handler not specified");
@@ -772,16 +773,30 @@ static int easydbus_subscribe(lua_State *L)
     obj_ud->ref = luaL_ref(L, LUA_REGISTRYINDEX);
     obj_ud->state = state;
 
-    g_dbus_connection_signal_subscribe(conn,
-                                       sender,
-                                       interface_name,
-                                       signal_name,
-                                       path,
-                                       NULL, /* arg0 */
-                                       G_DBUS_SIGNAL_FLAGS_NONE,
-                                       signal_callback,
-                                       obj_ud,
-                                       object_ud_free);
+    ref_id = g_dbus_connection_signal_subscribe(conn,
+                                                sender,
+                                                interface_name,
+                                                signal_name,
+                                                path,
+                                                NULL, /* arg0 */
+                                                G_DBUS_SIGNAL_FLAGS_NONE,
+                                                signal_callback,
+                                                obj_ud,
+                                                object_ud_free);
+
+    lua_pushinteger(L, ref_id);
+    return 1;
+}
+
+static int easydbus_unsubscribe(lua_State *L)
+{
+    struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
+    GDBusConnection *conn = get_conn(L, 1);
+    guint ref_id = luaL_checkinteger(L, 2);
+
+    g_debug("%s", __FUNCTION__);
+
+    g_dbus_connection_signal_unsubscribe(conn, ref_id);
 
     return 0;
 }
@@ -795,6 +810,7 @@ luaL_Reg bus_funcs[] = {
     {"unown_name", easydbus_unown_name},
     {"emit", easydbus_emit},
     {"subscribe", easydbus_subscribe},
+    {"unsubscribe", easydbus_unsubscribe},
     {NULL, NULL},
 };
 
