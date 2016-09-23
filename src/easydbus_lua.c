@@ -160,15 +160,20 @@ static int easydbus_set_epoll_cb(lua_State *L)
 static int easydbus_mainloop(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
+    guint sigint_id;
+    guint sigterm_id;
 
     state->loop = g_main_loop_new(state->context, FALSE);
 
-    g_unix_signal_add(SIGINT, on_signal, state->loop);
-    g_unix_signal_add(SIGTERM, on_signal, state->loop);
+    sigint_id = g_unix_signal_add(SIGINT, on_signal, state->loop);
+    sigterm_id = g_unix_signal_add(SIGTERM, on_signal, state->loop);
 
     g_debug("Entering mainloop");
     g_main_loop_run(state->loop);
     g_debug("Exiting mainloop");
+
+    g_source_remove(sigint_id);
+    g_source_remove(sigterm_id);
 
     g_main_loop_unref(state->loop);
     state->loop = NULL;
