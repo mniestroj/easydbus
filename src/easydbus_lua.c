@@ -200,7 +200,8 @@ static int easydbus_mainloop_quit(lua_State *L)
 static gboolean add_callback(gpointer user_data)
 {
     lua_State *T = user_data;
-    int n_params = lua_gettop(T) - 1;
+    struct easydbus_state *state = lua_touserdata(T, 1);
+    int n_params = lua_gettop(T) - 2;
     int ret;
 
     g_debug("add_callback");
@@ -215,25 +216,28 @@ static gboolean add_callback(gpointer user_data)
         g_debug("Callback successfully resumed");
     }
 
-    lua_pushlightuserdata(T, T);
-    lua_pushnil(T);
-    lua_rawset(T, LUA_REGISTRYINDEX);
+    lua_pushlightuserdata(state->L, T);
+    lua_pushnil(state->L);
+    lua_rawset(state->L, LUA_REGISTRYINDEX);
 
     return FALSE;
 }
 
 static int easydbus_add_callback(lua_State *L)
 {
+    struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     lua_State *T;
     int n_args = lua_gettop(L);
     int i;
 
     T = lua_newthread(L);
 
+    lua_pushlightuserdata(L, state);
+
     for (i = 1; i <= n_args; i++) {
         lua_pushvalue(L, i);
     }
-    lua_xmove(L, T, n_args);
+    lua_xmove(L, T, n_args + 1);
 
     lua_pushlightuserdata(L, T);
     lua_pushvalue(L, -2);
