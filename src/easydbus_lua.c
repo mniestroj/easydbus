@@ -75,10 +75,11 @@ static int ed_typecall(lua_State *L)
 
 static gboolean on_signal(gpointer user_data)
 {
-    GMainLoop *loop = user_data;
+    struct easydbus_state *state = user_data;
 
     g_debug("SIGINT/SIGTERM handler, exit program");
-    g_main_loop_quit(loop);
+    if (state->loop)
+        g_main_loop_quit(state->loop);
 
     return TRUE;
 }
@@ -165,8 +166,8 @@ static int easydbus_mainloop(lua_State *L)
 
     state->loop = g_main_loop_new(state->context, FALSE);
 
-    sigint_id = g_unix_signal_add(SIGINT, on_signal, state->loop);
-    sigterm_id = g_unix_signal_add(SIGTERM, on_signal, state->loop);
+    sigint_id = g_unix_signal_add(SIGINT, on_signal, state);
+    sigterm_id = g_unix_signal_add(SIGTERM, on_signal, state);
 
     g_debug("Entering mainloop");
     g_main_loop_run(state->loop);
