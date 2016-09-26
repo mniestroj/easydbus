@@ -312,7 +312,27 @@ static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDLis
                 value = to_variant(L, lua_gettop(L), lua_tostring(L, -2), fd_list);
                 lua_pop(L, 2);
             } else if ((n_arr = lua_rawlen(L, index)) > 0) {
-                value = to_array(L, index, "ai", fd_list);
+                const char *array_sig;
+
+                lua_rawgeti(L, index, 1);
+                switch (lua_type(L, -1)) {
+                case LUA_TBOOLEAN:
+                    array_sig = "ab";
+                    break;
+                case LUA_TSTRING:
+                    array_sig = "as";
+                    break;
+                case LUA_TNUMBER:
+                    if (lua_isinteger(L, -1))
+                        array_sig = "ai";
+                    else
+                        array_sig = "ad";
+                    break;
+                default:
+                    array_sig = "ai";
+                }
+                lua_pop(L, 1);
+                value = to_array(L, index, array_sig, fd_list);
             } else {
                 value = to_array(L, index, "a{sv}", fd_list);
             }
