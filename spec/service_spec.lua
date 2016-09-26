@@ -210,6 +210,39 @@ describe('Method handlers return values', function()
       test_types(test)
    end)
 
+   describe('Variant containing array of basic type', function()
+      local parent_test = test
+      local function test(method_name, sig, value)
+         local t = type(value)
+         if t == 'number' then
+            value = {
+               value,
+               value - 1,
+               value + 114,
+               value - 9,
+               value + 123,
+            }
+         elseif t == 'string' then
+            value = {
+               value,
+               value .. '_faa',
+               'as_' .. value,
+               'sf' .. value .. 'gdd',
+            }
+         elseif t == 'boolean' then
+            value = {
+               value,
+               not value,
+               false,
+               true
+            }
+         end
+         return parent_test(method_name .. 'InVariantInArray', 'v', value, dbus.type.variant(value))
+      end
+
+      test_types(test)
+   end)
+
    describe('Dictionary type', function()
       local parent_test = test
       local function test(method_name, sig, value)
