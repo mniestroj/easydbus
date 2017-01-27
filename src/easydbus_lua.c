@@ -14,6 +14,7 @@
 #include <gio/gio.h>
 #include <glib-unix.h>
 
+#include <assert.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -73,111 +74,28 @@ static int ed_typecall(lua_State *L)
     return 1;
 }
 
-static gboolean on_signal(gpointer user_data)
-{
-    struct easydbus_state *state = user_data;
-
-    g_debug("SIGINT/SIGTERM handler, exit program");
-    if (state->loop)
-        g_main_loop_quit(state->loop);
-
-    return TRUE;
-}
-
-static int easydbus_handle_epoll(lua_State *L)
-{
-    struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
-    int fd;
-    int revents;
-    int i;
-    int n_args = lua_gettop(L);
-
-    g_debug("%s", __FUNCTION__);
-
-    gpoll_fds_clear(state);
-
-    for (i = 1; i <= n_args; i++) {
-        luaL_argcheck(L, lua_istable(L, i), i, "Is not table");
-
-        lua_rawgeti(L, i, 1);
-        fd = lua_tointeger(L, -1);
-        if (fd == 0 && !lua_isnumber(L, -1)) {
-            g_warning("Type: %s", lua_typename(L, lua_type(L, -1)));
-            luaL_argerror(L, i, "fd is not a number");
-        }
-
-        lua_rawgeti(L, i, 2);
-        revents = lua_tointeger(L, -1);
-        if (fd == 0 && !lua_isnumber(L, -1))
-            luaL_argerror(L, i, "revents is not a number");
-
-        gpoll_fds_set(state, fd, revents);
-
-        lua_pop(L, 2);
-    }
-
-    gpoll_dispatch(state);
-
-    update_epoll(L, state);
-
-    return 0;
-}
-
 static int easydbus_system(lua_State *L)
 {
-    return new_conn(L, G_BUS_TYPE_SYSTEM);
+    return new_conn(L, DBUS_BUS_SYSTEM);
 }
 
 static int easydbus_session(lua_State *L)
 {
-    return new_conn(L, G_BUS_TYPE_SESSION);
-}
-
-/*
- * Args:
- * 1) callback
- * 2) callback argument (optional)
- */
-static int easydbus_set_epoll_cb(lua_State *L)
-{
-    struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
-    int i, n_args = lua_gettop(L);
-
-    luaL_argcheck(L, lua_isfunction(L, 1), 1, "Is not a function");
-
-    lua_newtable(L);
-    for (i = 1; i <= n_args; i++) {
-        lua_pushvalue(L, i);
-        lua_rawseti(L, n_args+1, i);
-    }
-    state->ref_cb = luaL_ref(L, LUA_REGISTRYINDEX);
-
-    update_epoll(L, state);
-
-    lua_pushboolean(L, 1);
-    return 1;
+    return new_conn(L, DBUS_BUS_SESSION);
 }
 
 static int easydbus_mainloop(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
-    guint sigint_id;
-    guint sigterm_id;
+    struct ev_loop *loop = state->loop;
 
-    state->loop = g_main_loop_new(state->context, FALSE);
-
-    sigint_id = g_unix_signal_add(SIGINT, on_signal, state);
-    sigterm_id = g_unix_signal_add(SIGTERM, on_signal, state);
+    state->in_mainloop = true;
 
     g_debug("Entering mainloop");
-    g_main_loop_run(state->loop);
+    ev_run(loop, 0);
     g_debug("Exiting mainloop");
 
-    g_source_remove(sigint_id);
-    g_source_remove(sigterm_id);
-
-    g_main_loop_unref(state->loop);
-    state->loop = NULL;
+    state->in_mainloop = false;
 
     return 0;
 }
@@ -185,22 +103,23 @@ static int easydbus_mainloop(lua_State *L)
 static int easydbus_mainloop_quit(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
+    struct ev_loop *loop = state->loop;
 
-    if (state->loop) {
-        g_main_loop_quit(state->loop);
+    ev_break(loop, EVBREAK_ONE);
 
-        lua_pushboolean(L, 1);
-        return 1;
-    }
-
-    lua_pushnil(L);
-    lua_pushliteral(L, "not running");
-    return 2;
+    lua_pushboolean(L, 1);
+    return 1;
 }
 
-static gboolean add_callback(gpointer user_data)
+struct ev_idle_wrap {
+    struct ev_idle idle;
+    lua_State *T;
+};
+
+static void add_callback(struct ev_loop *loop, struct ev_idle *idle, int revents)
 {
-    lua_State *T = user_data;
+    struct ev_idle_wrap *idle_wrap = container_of(idle, struct ev_idle_wrap, idle);
+    lua_State *T = idle_wrap->T;
     struct easydbus_state *state = lua_touserdata(T, 1);
     int n_params = lua_gettop(T) - 2;
     int ret;
@@ -221,7 +140,8 @@ static gboolean add_callback(gpointer user_data)
     lua_pushnil(state->L);
     lua_rawset(state->L, LUA_REGISTRYINDEX);
 
-    return FALSE;
+    ev_idle_stop(loop, idle);
+    free(idle_wrap);
 }
 
 static int easydbus_add_callback(lua_State *L)
@@ -230,6 +150,8 @@ static int easydbus_add_callback(lua_State *L)
     lua_State *T;
     int n_args = lua_gettop(L);
     int i;
+    struct ev_idle_wrap *idle_wrap = malloc(sizeof(*idle_wrap));
+    assert(idle_wrap);
 
     T = lua_newthread(L);
 
@@ -245,7 +167,9 @@ static int easydbus_add_callback(lua_State *L)
     lua_rawset(L, LUA_REGISTRYINDEX);
     lua_pop(L, 1);
 
-    g_idle_add(add_callback, T);
+    idle_wrap->T = T;
+    ev_idle_init(&idle_wrap->idle, add_callback);
+    ev_idle_start(state->loop, &idle_wrap->idle);
 
     return 0;
 }
@@ -266,8 +190,6 @@ static int easydbus_pack(lua_State *L)
 static luaL_Reg funcs[] = {
     {"system", easydbus_system},
     {"session", easydbus_session},
-    {"handle_epoll", easydbus_handle_epoll},
-    {"set_epoll_cb", easydbus_set_epoll_cb},
     {"mainloop", easydbus_mainloop},
     {"mainloop_quit", easydbus_mainloop_quit},
     {"add_callback", easydbus_add_callback}, /* only for internal mainloop */
@@ -275,24 +197,22 @@ static luaL_Reg funcs[] = {
     {NULL, NULL},
 };
 
-static int easydbus_state__gc(lua_State *L)
+static void signal_handler(struct ev_loop *loop, struct ev_signal *signal, int revents)
 {
-    struct easydbus_state *state = lua_touserdata(L, 1);
-
-    g_debug("%s %p", __FUNCTION__, (void *) state);
-    g_main_context_release(state->context);
-
-    return 0;
+    g_debug("signal_handler");
+    ev_break(loop, EVBREAK_ALL);
 }
 
-static luaL_Reg state_mt[] = {
-    {"__gc", easydbus_state__gc},
-    {NULL, NULL},
-};
+#define push_const_int(name)                    \
+    do {                                        \
+        lua_pushinteger(L, name);               \
+        lua_setfield(L, -2, #name);             \
+    } while(0)
 
 LUALIB_API int luaopen_easydbus_core(lua_State *L)
 {
     struct easydbus_state *state;
+    struct ev_signal signal;
 
     g_debug("PID: %d", (int) getpid());
 
@@ -304,17 +224,14 @@ LUALIB_API int luaopen_easydbus_core(lua_State *L)
         lua_pushliteral(L, "Out of memory");
         return 2;
     }
-    luaL_newlibtable(L, state_mt);
-    luaL_setfuncs(L, state_mt, 0);
-    lua_setmetatable(L, -2);
     g_debug("Created state: %p", (void *) state);
-    state->context = g_main_context_default();
-    state->loop = NULL;
-    state->fds = NULL;
-    state->allocated_nfds = 0;
-    state->nfds = 0;
+    state->loop = EV_DEFAULT;
+    state->in_mainloop = false;
     state->ref_cb = -1;
     state->L = L;
+
+    ev_signal_init(&signal, signal_handler, SIGINT);
+    ev_signal_start(state->loop, &signal);
 
     /* Set functions */
     luaL_newlibtable(L, funcs);
@@ -344,7 +261,19 @@ LUALIB_API int luaopen_easydbus_core(lua_State *L)
 
     lua_rawset(L, -3);
 
-    g_main_context_acquire(state->context);
+    /* Push const */
+    push_const_int(DBUS_NAME_FLAG_ALLOW_REPLACEMENT);
+    push_const_int(DBUS_NAME_FLAG_REPLACE_EXISTING);
+    push_const_int(DBUS_NAME_FLAG_DO_NOT_QUEUE);
+
+    push_const_int(DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER);
+    push_const_int(DBUS_REQUEST_NAME_REPLY_IN_QUEUE);
+    push_const_int(DBUS_REQUEST_NAME_REPLY_EXISTS);
+    push_const_int(DBUS_REQUEST_NAME_REPLY_ALREADY_OWNER);
+
+    push_const_int(DBUS_RELEASE_NAME_REPLY_RELEASED);
+    push_const_int(DBUS_RELEASE_NAME_REPLY_NON_EXISTENT);
+    push_const_int(DBUS_RELEASE_NAME_REPLY_NOT_OWNER);
 
     return 1;
 }

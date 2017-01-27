@@ -7,222 +7,328 @@
 #include "compat.h"
 #include "utils.h"
 
+#include <stdlib.h>
 #include <string.h>
 
-int push_variant(lua_State *L, GVariant *value, GUnixFDList *fd_list)
+static DBusError error;
+
+static int push_iter(DBusMessageIter *msg_iter, lua_State *L)
 {
-    GVariant *elem;
-    gsize n, i;
-    GError *error = NULL;
-    int fd;
+    int msg_type = dbus_message_iter_get_arg_type(msg_iter);
 
-    switch (g_variant_classify(value)) {
-    case G_VARIANT_CLASS_ARRAY:
-        if (g_variant_get_type_string(value)[1] == '{') {
-            GVariant *key, *val;
+    switch (msg_type) {
+    case DBUS_TYPE_ARRAY: {
+        DBusMessageIter amsg_iter;
+        int elem_type = dbus_message_iter_get_element_type(msg_iter);
+        int n = dbus_message_iter_get_element_count(msg_iter);
+        int i;
 
-            n = g_variant_n_children(value);
+        dbus_message_iter_recurse(msg_iter, &amsg_iter);
+        if (elem_type == DBUS_TYPE_DICT_ENTRY) {
             lua_createtable(L, 0, n);
-            for (i = 0; i < n; i++) {
-                elem = g_variant_get_child_value(value, i);
-                key = g_variant_get_child_value(elem, 0);
-                val = g_variant_get_child_value(elem, 1);
-                g_variant_unref(elem);
 
-                push_variant(L, key, fd_list);
-                push_variant(L, val, fd_list);
+            for (i = 0; i < n; i++) {
+                DBusMessageIter dmsg_iter;
+
+                dbus_message_iter_recurse(&amsg_iter, &dmsg_iter);
+                push_iter(&dmsg_iter, L);
+                dbus_message_iter_next(&dmsg_iter);
+                push_iter(&dmsg_iter, L);
+
                 lua_rawset(L, -3);
 
-                g_variant_unref(key);
-                g_variant_unref(val);
+                dbus_message_iter_next(&amsg_iter);
             }
         } else {
-            n = g_variant_n_children(value);
             lua_createtable(L, n, 0);
+
             for (i = 0; i < n; i++) {
-                elem = g_variant_get_child_value(value, i);
-                push_variant(L, elem, fd_list);
+                push_iter(&amsg_iter, L);
+
                 lua_rawseti(L, -2, i+1);
-                g_variant_unref(elem);
+
+                dbus_message_iter_next(&amsg_iter);
             }
-            return 0;
         }
         break;
-    case G_VARIANT_CLASS_TUPLE:
-        n = g_variant_n_children(value);
-        lua_createtable(L, n, 0);
-        for (i = 0; i < n; i++) {
-            elem = g_variant_get_child_value(value, i);
-            push_variant(L, elem, fd_list);
-            lua_rawseti(L, -2, i+1);
-            g_variant_unref(elem);
-        }
-        break;
-    case G_VARIANT_CLASS_BOOLEAN:
-        lua_pushboolean(L, g_variant_get_boolean(value) ? 1 : 0);
-        break;
-    case G_VARIANT_CLASS_STRING:
-    case G_VARIANT_CLASS_OBJECT_PATH:
-    case G_VARIANT_CLASS_SIGNATURE:
-        lua_pushstring(L, g_variant_get_string(value, NULL));
-        break;
-    case G_VARIANT_CLASS_BYTE:
-        lua_pushinteger(L, g_variant_get_byte(value));
-        break;
-    case G_VARIANT_CLASS_INT16:
-        lua_pushinteger(L, g_variant_get_int16(value));
-        break;
-    case G_VARIANT_CLASS_UINT16:
-        lua_pushinteger(L, g_variant_get_uint16(value));
-        break;
-    case G_VARIANT_CLASS_INT32:
-        lua_pushinteger(L, g_variant_get_int32(value));
-        break;
-    case G_VARIANT_CLASS_UINT32:
-        lua_pushinteger(L, g_variant_get_uint32(value));
-        break;
-    case G_VARIANT_CLASS_INT64:
-        lua_pushinteger(L, g_variant_get_int64(value));
-        break;
-    case G_VARIANT_CLASS_UINT64:
-        lua_pushinteger(L, g_variant_get_uint64(value));
-        break;
-    case G_VARIANT_CLASS_DOUBLE:
-        lua_pushnumber(L, g_variant_get_double(value));
-        break;
-    case G_VARIANT_CLASS_HANDLE:
-        fd = g_unix_fd_list_get(fd_list, g_variant_get_handle(value), &error);
-        if (fd < 0) {
-            lua_pushfstring(L, "Failed to push handle: %s", error->message);
-            g_error_free(error);
-            lua_error(L);
-        }
-        lua_pushinteger(L, fd);
-        break;
-    case G_VARIANT_CLASS_VARIANT:
-        elem = g_variant_get_variant(value);
-        push_variant(L, elem, fd_list);
-        g_variant_unref(elem);
-        break;
-    default:
-    {
-        gchar *str = g_variant_print(value, TRUE);
-        g_warning("Unrecognized type: %s", str);
-        g_free(str);
-        return 0;
     }
+    case DBUS_TYPE_STRUCT: {
+        DBusMessageIter smsg_iter;
+        dbus_bool_t valid = TRUE;
+        int i = 1;
+
+        lua_newtable(L);
+        dbus_message_iter_recurse(msg_iter, &smsg_iter);
+        while (valid) {
+            push_iter(&smsg_iter, L);
+
+            lua_rawseti(L, -2, i++);
+
+            valid = dbus_message_iter_next(&smsg_iter);
+        }
+        break;
+    }
+    case DBUS_TYPE_BOOLEAN: {
+        dbus_bool_t val;
+        dbus_message_iter_get_basic(msg_iter, &val);
+        lua_pushboolean(L, val ? 1 : 0);
+        break;
+    }
+    case DBUS_TYPE_STRING:
+    case DBUS_TYPE_OBJECT_PATH:
+    case DBUS_TYPE_SIGNATURE: {
+        char *val;
+        dbus_message_iter_get_basic(msg_iter, &val);
+        lua_pushstring(L, val);
+        break;
+    }
+    case DBUS_TYPE_BYTE: {
+        unsigned char val;
+        dbus_message_iter_get_basic(msg_iter, &val);
+        lua_pushinteger(L, val);
+        break;
+    }
+    case DBUS_TYPE_INT16: {
+        dbus_int16_t val;
+        dbus_message_iter_get_basic(msg_iter, &val);
+        lua_pushinteger(L, val);
+        break;
+    }
+    case DBUS_TYPE_UINT16: {
+        dbus_uint16_t val;
+        dbus_message_iter_get_basic(msg_iter, &val);
+        lua_pushinteger(L, val);
+        break;
+    }
+    case DBUS_TYPE_INT32: {
+        dbus_int32_t val;
+        dbus_message_iter_get_basic(msg_iter, &val);
+        lua_pushinteger(L, val);
+        break;
+    }
+    case DBUS_TYPE_UINT32: {
+        dbus_uint32_t val;
+        dbus_message_iter_get_basic(msg_iter, &val);
+        lua_pushinteger(L, val);
+        break;
+    }
+    case DBUS_TYPE_INT64: {
+        dbus_int64_t val;
+        dbus_message_iter_get_basic(msg_iter, &val);
+        lua_pushinteger(L, val);
+        break;
+    }
+    case DBUS_TYPE_UINT64: {
+        dbus_uint64_t val;
+        dbus_message_iter_get_basic(msg_iter, &val);
+        lua_pushinteger(L, val);
+        break;
+    }
+    case DBUS_TYPE_DOUBLE: {
+        double val;
+        dbus_message_iter_get_basic(msg_iter, &val);
+        lua_pushnumber(L, val);
+        break;
+    }
+    case DBUS_TYPE_UNIX_FD: {
+        int val;
+        dbus_message_iter_get_basic(msg_iter, &val);
+        lua_pushinteger(L, val);
+        break;
+    }
+    case DBUS_TYPE_VARIANT: {
+        DBusMessageIter rmsg_iter;
+        dbus_message_iter_recurse(msg_iter, &rmsg_iter);
+        push_iter(&rmsg_iter, L);
+        break;
+    }
+    default:
+        g_warning("Unrecognized type!");
+        return 0;
     }
 
     return 1;
 }
 
-int push_tuple(lua_State *L, GVariant *value, GUnixFDList *fd_list)
+int push_msg(lua_State *L, DBusMessage *msg)
 {
-    GVariant *elem;
-    gsize n, i;
+    DBusMessageIter msg_iter;
+    int num = 0;
 
-    n = g_variant_n_children(value);
-    for (i = 0; i < n; i++) {
-        elem = g_variant_get_child_value(value, i);
-        push_variant(L, elem, fd_list);
-        g_variant_unref(elem);
+    if (dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_ERROR) {
+        lua_pushnil(L);
+        dbus_set_error_from_message(&error, msg);
+        lua_pushstring(L, error.message);
+        dbus_error_free(&error);
+        dbus_message_unref(msg);
+        return 2;
     }
 
-    return n;
+    if (!dbus_message_iter_init(msg, &msg_iter))
+        return 0;
+
+    do {
+        push_iter(&msg_iter, L);
+        num++;
+    } while (dbus_message_iter_next(&msg_iter));
+
+    return num;
 }
 
-static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDList *fd_list);
+static void to_iter(DBusMessageIter *msg_iter, lua_State *L, int index, DBusSignatureIter *sig_iter);
 
-static GVariant *to_tuple(lua_State *L, int index, const char *sig, GUnixFDList *fd_list)
+static void to_struct(DBusMessageIter *msg_iter, lua_State *L, int index, DBusSignatureIter *sig_iter)
 {
-    GVariantBuilder elem_builder;
-    char *elem_sig;
+    DBusMessageIter struct_iter;
+    DBusSignatureIter elem_sig_iter;
     int i;
     int n_arg = lua_rawlen(L, index);
-    int ret;
-    const char *startptr, *endptr;
+    dbus_bool_t sig_iter_valid = TRUE;
 
-    startptr = &sig[1];
-
-    g_variant_builder_init(&elem_builder, G_VARIANT_TYPE_TUPLE);
+    dbus_signature_iter_recurse(sig_iter, &elem_sig_iter);
+    dbus_message_iter_open_container(msg_iter, DBUS_TYPE_STRUCT, NULL, &struct_iter);
 
     for (i = 1; i <= n_arg; i++) {
+        if (!sig_iter_valid)
+            g_error("There are more elements in struct than in signature");
+
         lua_rawgeti(L, index, i);
-        ret = g_variant_type_string_scan(startptr, NULL, &endptr);
-        if (!ret)
-            g_error("Invalid tuple type: %s", startptr);
-        elem_sig = g_strndup(startptr, endptr - startptr);
-        g_variant_builder_add_value(&elem_builder, to_variant(L, lua_gettop(L), elem_sig, fd_list));
-        g_free(elem_sig);
+        to_iter(&struct_iter, L, lua_gettop(L), &elem_sig_iter);
         lua_pop(L, 1);
-        startptr = endptr;
+
+        sig_iter_valid = dbus_signature_iter_next(&elem_sig_iter);
     }
 
-    return g_variant_builder_end(&elem_builder);
+    if (sig_iter_valid)
+        g_error("There are less elements in struct than in signature");
+
+    dbus_message_iter_close_container(msg_iter, &struct_iter);
 }
 
-static GVariant *to_array(lua_State *L, int index, const char *sig, GUnixFDList *fd_list)
+static void to_array(DBusMessageIter *msg_iter, lua_State *L, int index, DBusSignatureIter *sig_iter)
 {
-    GVariantBuilder array_builder;
+    DBusMessageIter array_iter;
+    DBusSignatureIter elem_sig_iter;
+    char *sig;
     int top = lua_gettop(L);
-    char *key_sig;
-    char *val_sig;
     int i, n_arr;
 
-    g_variant_builder_init(&array_builder, G_VARIANT_TYPE(sig));
-    if (sig[1] == '{') {
-        GVariantBuilder elem_builder;
+    dbus_signature_iter_recurse(sig_iter, &elem_sig_iter);
+    sig = dbus_signature_iter_get_signature(&elem_sig_iter);
+    dbus_message_iter_open_container(msg_iter, DBUS_TYPE_ARRAY, sig, &array_iter);
+    if (dbus_signature_iter_get_current_type(&elem_sig_iter) == DBUS_TYPE_DICT_ENTRY) {
+        DBusMessageIter elem_iter;
+        DBusSignatureIter key_sig_iter;
+        DBusSignatureIter val_sig_iter;
 
-        key_sig = g_strndup(&sig[2], 1);
-        val_sig = g_strndup(&sig[3], strlen(sig) - 4);
+        dbus_signature_iter_recurse(&elem_sig_iter, &key_sig_iter);
+        dbus_signature_iter_recurse(&elem_sig_iter, &val_sig_iter);
+        dbus_signature_iter_next(&val_sig_iter);
 
         lua_pushnil(L);
         while (lua_next(L, index) != 0) {
-            g_variant_builder_init(&elem_builder, G_VARIANT_TYPE(&sig[1]));
+            dbus_message_iter_open_container(&array_iter, DBUS_TYPE_DICT_ENTRY,
+                                             NULL, &elem_iter);
 
-            g_variant_builder_add_value(&elem_builder, to_variant(L, top + 1, key_sig, fd_list));
-            g_variant_builder_add_value(&elem_builder, to_variant(L, top + 2, val_sig, fd_list));
-
-            g_variant_builder_add_value(&array_builder, g_variant_builder_end(&elem_builder));
-
+            to_iter(&elem_iter, L, top + 1, &key_sig_iter);
+            to_iter(&elem_iter, L, top + 2, &val_sig_iter);
             lua_pop(L, 1);
-        }
 
-        g_free(key_sig);
-        g_free(val_sig);
+            dbus_message_iter_close_container(&array_iter, &elem_iter);
+        }
     } else {
         /* TODO: handle zero length arrays */
         n_arr = lua_rawlen(L, index);
         for (i = 1; i <= n_arr; i++) {
             lua_rawgeti(L, index, i);
-            g_variant_builder_add_value(&array_builder, to_variant(L, top + 1, &sig[1], fd_list));
+            to_iter(&array_iter, L, top + 1, &elem_sig_iter);
             lua_pop(L, 1);
         }
     }
 
-    return g_variant_builder_end(&array_builder);
+    dbus_message_iter_close_container(msg_iter, &array_iter);
 }
 
-static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDList *fd_list)
+static const char *get_variant_type(lua_State *L, int index)
 {
-    int n_arr;
-    GVariant *value = NULL;
-    const char *str;
-    gint handle;
-    GError *error = NULL;
+    size_t n_arr;
+
+    switch (lua_type(L, index)) {
+    case LUA_TBOOLEAN:
+        return DBUS_TYPE_BOOLEAN_AS_STRING;
+    case LUA_TNUMBER:
+        if (lua_isinteger(L, index))
+            return DBUS_TYPE_INT32_AS_STRING;
+        else
+            return DBUS_TYPE_DOUBLE_AS_STRING;
+    case LUA_TSTRING:
+        return DBUS_TYPE_STRING_AS_STRING;
+    case LUA_TTABLE:
+        if (easydbus_is_dbus_type(L, index)) {
+            const char *sig;
+
+            lua_rawgeti(L, index, 2);
+            sig = lua_tostring(L, -1);
+            lua_pop(L, 1);
+
+            return sig;
+        } else if ((n_arr = lua_rawlen(L, index)) > 0) {
+            const char *array_sig;
+
+            lua_rawgeti(L, index, 1);
+            switch (lua_type(L, -1)) {
+            case LUA_TBOOLEAN:
+                array_sig = "ab";
+                break;
+            case LUA_TSTRING:
+                array_sig = "as";
+                break;
+            case LUA_TNUMBER:
+                if (lua_isinteger(L, -1))
+                    array_sig = "ai";
+                else
+                    array_sig = "ad";
+                break;
+            default:
+                array_sig = "ai";
+            }
+            lua_pop(L, 1);
+
+            return array_sig;
+        } else {
+            return "a{sv}";
+        }
+    }
+
+    luaL_error(L, "Cannot get variant type");
+    return NULL;
+}
+
+static void to_iter(DBusMessageIter *msg_iter, lua_State *L, int index, DBusSignatureIter *sig_iter)
+{
     gboolean is_type = FALSE;
+    char *sig = sig_iter ? dbus_signature_iter_get_signature(sig_iter) : NULL;
+    size_t n_arr;
 
     g_debug("%s: index=%d sig=%s lua_type=%s", __FUNCTION__, index, sig, lua_typename(L, lua_type(L, index)));
+    dbus_free(sig);
 
-    if (sig && sig[0] != 'v') {
+    if (sig_iter && dbus_signature_iter_get_current_type(sig_iter) != DBUS_TYPE_VARIANT) {
         if (easydbus_is_dbus_type(L, index)) {
+            char *sig = dbus_signature_iter_get_signature(sig_iter);
             const char *val_type;
+            bool same_sig;
 
             /* Check value type and signature */
             lua_rawgeti(L, index, 2);
             val_type = lua_tostring(L, -1);
-            if (g_strcmp0(val_type, sig) != 0)
+            same_sig = (g_strcmp0(val_type, sig) == 0);
+            if (!same_sig) {
+                /* TODO: sig is not freed */
                 luaL_error(L, "Value type (%s) is different than signature (%s)", val_type, sig);
+                dbus_free(sig);
+            }
+            dbus_free(sig);
             lua_pop(L, 1);
             is_type = TRUE;
 
@@ -231,88 +337,124 @@ static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDLis
             index = lua_gettop(L);
         }
 
-        switch (sig[0]) {
-        case 'b':
-            value = g_variant_new_boolean(lua_toboolean(L, index));
+        switch (dbus_signature_iter_get_current_type(sig_iter)) {
+        case DBUS_TYPE_BOOLEAN: {
+            dbus_bool_t val = lua_toboolean(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_BOOLEAN, &val);
             break;
-        case 'y':
-            value = g_variant_new_byte(lua_tointeger(L, index));
+        }
+        case DBUS_TYPE_BYTE: {
+            unsigned char val = lua_tointeger(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_BYTE, &val);
             break;
-        case 'n':
-            value = g_variant_new_int16(lua_tointeger(L, index));
+        }
+        case DBUS_TYPE_INT16: {
+            dbus_int16_t val = lua_tointeger(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_INT16, &val);
             break;
-        case 'q':
-            value = g_variant_new_uint16(lua_tointeger(L, index));
+        }
+        case DBUS_TYPE_UINT16: {
+            dbus_uint16_t val = lua_tointeger(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_UINT16, &val);
             break;
-        case 'i':
-            value = g_variant_new_int32(lua_tointeger(L, index));
+        }
+        case DBUS_TYPE_INT32: {
+            dbus_int32_t val = lua_tointeger(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_INT32, &val);
             break;
-        case 'u':
-            value = g_variant_new_uint32(lua_tointeger(L, index));
+        }
+        case DBUS_TYPE_UINT32: {
+            dbus_uint32_t val = lua_tointeger(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_UINT32, &val);
             break;
-        case 'x':
-            value = g_variant_new_int64(lua_tointeger(L, index));
+        }
+        case DBUS_TYPE_INT64: {
+            dbus_int64_t val = lua_tointeger(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_INT64, &val);
             break;
-        case 't':
-            value = g_variant_new_uint64(lua_tointeger(L, index));
+        }
+        case DBUS_TYPE_UINT64: {
+            dbus_uint64_t val = lua_tointeger(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_UINT64, &val);
             break;
-        case 'd':
-            value = g_variant_new_double(lua_tonumber(L, index));
+        }
+        case DBUS_TYPE_DOUBLE: {
+            double val = lua_tonumber(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_DOUBLE, &val);
             break;
-        case 'h':
-            if (!fd_list)
-                luaL_error(L, "FD is not supported");
-            handle = g_unix_fd_list_append(fd_list, lua_tointeger(L, index), &error);
-            if (handle < 0) {
-                lua_pushfstring(L, "Failed to add handle: %s", error->message);
-                g_error_free(error);
-                lua_error(L);
-            }
-            value = g_variant_new_handle(handle);
+        }
+        case DBUS_TYPE_UNIX_FD: {
+            int val = lua_tointeger(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_UNIX_FD, &val);
             break;
-        case 's':
-            str = lua_tostring(L, index);
+        }
+        case DBUS_TYPE_STRING: {
+            const char *str = lua_tostring(L, index);
             if (!str)
                 luaL_error(L, "string expected");
-            value = g_variant_new_string(str);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_STRING, &str);
             break;
-        case 'o':
-            str = lua_tostring(L, index);
-            if (!g_variant_is_object_path(str))
+        }
+        case DBUS_TYPE_OBJECT_PATH: {
+            const char *str = lua_tostring(L, index);
+            if (!dbus_validate_path(str, NULL))
                 luaL_error(L, "Invalid object path: %s", str);
-            value = g_variant_new_object_path(str);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_OBJECT_PATH, &str);
             break;
-        case 'a':
-            value = to_array(L, index, sig, fd_list);
+        }
+        case DBUS_TYPE_ARRAY:
+            to_array(msg_iter, L, index, sig_iter);
             break;
-        case '(':
-            value = to_tuple(L, index, sig, fd_list);
+        case DBUS_TYPE_STRUCT:
+            to_struct(msg_iter, L, index, sig_iter);
             break;
-        case 'v':
-            value = to_variant(L, index, sig, fd_list);
+        case DBUS_TYPE_VARIANT:
+            to_iter(msg_iter, L, index, sig_iter);
             break;
-        default:
+        default: {
+            /* TODO: sig is not freed */
+            char *sig = dbus_signature_iter_get_signature(sig_iter);
             luaL_error(L, "Unsupported output signature: %s", sig);
+            dbus_free(sig);
+        }
         }
     } else {
+        DBusMessageIter *master_iter = msg_iter;
+        DBusMessageIter variant_iter;
+
+        if (sig_iter && dbus_signature_iter_get_current_type(sig_iter) == DBUS_TYPE_VARIANT) {
+            dbus_message_iter_open_container(master_iter, DBUS_TYPE_VARIANT, get_variant_type(L, index), &variant_iter);
+            msg_iter = &variant_iter;
+        }
+
         switch (lua_type(L, index)) {
-        case LUA_TBOOLEAN:
-            value = g_variant_new_boolean(lua_toboolean(L, index) ? TRUE : FALSE);
+        case LUA_TBOOLEAN: {
+            dbus_bool_t val = lua_toboolean(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_BOOLEAN, &val);
             break;
-        case LUA_TNUMBER:
-            value = g_variant_new_int32(lua_tointeger(L, index));
+        }
+        case LUA_TNUMBER: {
+            dbus_int32_t val = lua_tointeger(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_INT32, &val);
             break;
-        case LUA_TSTRING:
-            value = g_variant_new_string(lua_tostring(L, index));
+        }
+        case LUA_TSTRING: {
+            const char *val = lua_tostring(L, index);
+            dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_STRING, &val);
             break;
+        }
         case LUA_TTABLE:
             if (easydbus_is_dbus_type(L, index)) {
+                DBusSignatureIter inner_sig_iter;
+
                 lua_rawgeti(L, index, 2);
                 lua_rawgeti(L, index, 1);
-                value = to_variant(L, lua_gettop(L), lua_tostring(L, -2), fd_list);
+                dbus_signature_iter_init(&inner_sig_iter, lua_tostring(L, -2));
+                to_iter(msg_iter, L, lua_gettop(L), &inner_sig_iter);
                 lua_pop(L, 2);
             } else if ((n_arr = lua_rawlen(L, index)) > 0) {
                 const char *array_sig;
+                DBusSignatureIter inner_sig_iter;
 
                 lua_rawgeti(L, index, 1);
                 switch (lua_type(L, -1)) {
@@ -332,53 +474,52 @@ static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDLis
                     array_sig = "ai";
                 }
                 lua_pop(L, 1);
-                value = to_array(L, index, array_sig, fd_list);
+                dbus_signature_iter_init(&inner_sig_iter, array_sig);
+                to_array(msg_iter, L, index, &inner_sig_iter);
             } else {
-                value = to_array(L, index, "a{sv}", fd_list);
+                DBusSignatureIter inner_sig_iter;
+
+                dbus_signature_iter_init(&inner_sig_iter, "a{sv}");
+                to_array(msg_iter, L, index, &inner_sig_iter);
             }
             break;
         default:
             luaL_error(L, "Unsupported output type: %s", lua_typename(L, lua_type(L, index)));
         }
 
-        if (sig && sig[0] == 'v')
-            value = g_variant_new_variant(value);
+        if (sig_iter && dbus_signature_iter_get_current_type(sig_iter) == DBUS_TYPE_VARIANT)
+            dbus_message_iter_close_container(master_iter, &variant_iter);
     }
 
     /* Remove pushed value from type table */
     if (is_type)
         lua_pop(L, 1);
-
-    return value;
 }
 
-GVariant *range_to_tuple(lua_State *L, int index_begin, int index_end, const char *sig, GUnixFDList *fd_list)
+void range_to_msg(DBusMessage *msg, lua_State *L, int index_begin, int index_end, const char *sig)
 {
-    GVariantBuilder builder;
+    DBusMessageIter msg_iter;
+    DBusSignatureIter sig_iter;
+    dbus_bool_t sig_iter_valid = TRUE;
     int i;
-    int ret;
-    const char *startptr, *endptr;
-    char *subsig;
 
     g_debug("%s: index_begin=%d index_end=%d sig=%s",
             __FUNCTION__, index_begin, index_end, sig);
 
-    g_variant_builder_init(&builder, G_VARIANT_TYPE_TUPLE);
+    dbus_message_iter_init_append(msg, &msg_iter);
     if (sig) {
-        startptr = sig;
+        dbus_signature_iter_init(&sig_iter, sig);
+
         for (i = index_begin; i < index_end; i++) {
-            ret = g_variant_type_string_scan(startptr, NULL, &endptr);
-            if (!ret)
-                g_error("Failed to parse signature");
-            subsig = g_strndup(startptr, endptr - startptr);
-            g_variant_builder_add_value(&builder, to_variant(L, i, subsig, fd_list));
-            g_free(subsig);
-            startptr = endptr;
+            if (!sig_iter_valid)
+                g_error("Signature is too short");
+
+            to_iter(&msg_iter, L, i, &sig_iter);
+
+            sig_iter_valid = dbus_signature_iter_next(&sig_iter);
         }
     } else {
         for (i = index_begin; i < index_end; i++)
-            g_variant_builder_add_value(&builder, to_variant(L, i, NULL, fd_list));
+            to_iter(&msg_iter, L, i, NULL);
     }
-
-    return g_variant_builder_end(&builder);
 }

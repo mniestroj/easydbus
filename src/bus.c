@@ -11,12 +11,21 @@
 #include "poll.h"
 #include "utils.h"
 
+#include <assert.h>
+#include <stdlib.h>
+
 static int bus_mt;
 #define BUS_MT ((void *) &bus_mt)
 
-static GDBusConnection *get_conn(lua_State *L, int index)
+/*
+ * Error is shared because we don't want to initialize it every time we call
+ * an API.
+ */
+DBusError error;
+
+static DBusConnection *get_conn(lua_State *L, int index)
 {
-    GDBusConnection *conn;
+    DBusConnection *conn;
 
     lua_rawgeti(L, index, 1);
 
@@ -26,17 +35,18 @@ static GDBusConnection *get_conn(lua_State *L, int index)
     return conn;
 }
 
-static void call_callback(GObject *source, GAsyncResult *res, gpointer user_data)
+static void call_callback(DBusPendingCall *pending_call, void *data)
 {
-    lua_State *T = user_data;
-    GDBusConnection *conn = lua_touserdata(T, 1);
-    GError *error = NULL;
-    GUnixFDList *fd_list = NULL;
-    GVariant *result = g_dbus_connection_call_with_unix_fd_list_finish(conn, &fd_list, res, &error);
+    lua_State *T = data;
+    //DBusConnection *conn = lua_touserdata(T, 1);
     int i;
     int n_args = lua_gettop(T);
+    DBusMessage *msg = dbus_pending_call_steal_reply(pending_call);
+    assert(msg);
 
-    g_debug("call_callback(%p)", (void *) user_data);
+    g_debug("call_callback(%p)", data);
+
+    dbus_pending_call_unref(pending_call);
 
     for (i = 1; i <= n_args; i++) {
         if (lua_type(T, i) == LUA_TSTRING)
@@ -45,25 +55,20 @@ static void call_callback(GObject *source, GAsyncResult *res, gpointer user_data
             g_debug("arg %d: type=%s", i, lua_typename(T, lua_type(T, i)));
     }
 
-    if (!error) {
+    if (dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_METHOD_RETURN) {
         g_debug("got reply");
 
-        g_assert_no_error(error);
-        g_assert(result != NULL);
-
         /* Resume Lua callback */
-        ed_resume(T, 1 + push_tuple(T, result, fd_list));
-
-        if (fd_list)
-            g_object_unref(fd_list);
-        g_variant_unref(result);
+        ed_resume(T, 1 + push_msg(T, msg));
     } else {
         lua_pushnil(T);
-        lua_pushstring(T, error->message);
+        dbus_set_error_from_message(&error, msg);
+        lua_pushstring(T, error.message);
+        dbus_error_free(&error);
         ed_resume(T, 3);
-
-        g_clear_error(&error);
     }
+
+    dbus_message_unref(msg);
 
     /* Remove thread from registry, so garbage collection can take place */
     lua_pushlightuserdata(T, T);
@@ -73,7 +78,12 @@ static void call_callback(GObject *source, GAsyncResult *res, gpointer user_data
 
 static inline gboolean in_mainloop(struct easydbus_state *state)
 {
-    return (state->loop || state->ref_cb != -1);
+    return state->in_mainloop;
+}
+
+static void notify_delete(void *data)
+{
+    g_debug("notify_delete %p", data);
 }
 
 /*
@@ -91,64 +101,55 @@ static inline gboolean in_mainloop(struct easydbus_state *state)
 static int bus_call(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
-    GDBusConnection *conn = get_conn(L, 1);
-    const char *bus_name = luaL_checkstring(L, 2);
+    DBusConnection *conn = get_conn(L, 1);
+    const char *dest = luaL_checkstring(L, 2);
     const char *object_path = luaL_checkstring(L, 3);
     const char *interface_name = luaL_checkstring(L, 4);
     const char *method_name = luaL_checkstring(L, 5);
     const char *sig = lua_tostring(L, 6);
-    GVariant *params = NULL;
     lua_State *T;
     int i, n_args = lua_gettop(L);
     int n_params = n_args - 6;
-    GUnixFDList *fd_list = g_unix_fd_list_new();
+    DBusMessage *msg;
+    DBusPendingCall *pending_call;
+    dbus_bool_t ret;
+    DBusError error;
 
-    g_debug("%s: conn=%p bus_name=%s object_path=%s interface_name=%s method_name=%s sig=%s",
-            __FUNCTION__, (void *) conn, bus_name, object_path, interface_name, method_name, sig);
+    g_debug("%s: conn=%p dest=%s object_path=%s interface_name=%s method_name=%s sig=%s",
+            __FUNCTION__, (void *) conn, dest, object_path, interface_name, method_name, sig);
 
-    luaL_argcheck(L, g_dbus_is_name(bus_name), 2, "Invalid bus name");
+    luaL_argcheck(L, g_dbus_is_name(dest), 2, "Invalid bus name");
     luaL_argcheck(L, g_variant_is_object_path(object_path), 3, "Invalid object path");
     luaL_argcheck(L, g_dbus_is_interface_name(interface_name), 4, "Invalid interface name");
 
+    msg = dbus_message_new_method_call(dest, object_path, interface_name,
+                                       method_name);
+    assert(msg);
+
     if (!in_mainloop(state)) {
-        GVariant *result;
-        GError *error = NULL;
+        DBusMessage *result;
         int ret;
-        GUnixFDList *out_fd_list = NULL;
 
         if (n_params > 0)
-            params = range_to_tuple(L, 7, 7 + n_params, sig, fd_list);
+            range_to_msg(msg, L, 7, 7 + n_params, sig);
 
-        result = g_dbus_connection_call_with_unix_fd_list_sync(conn,
-                                                               bus_name,
-                                                               object_path,
-                                                               interface_name,
-                                                               method_name,
-                                                               params,
-                                                               NULL,
-                                                               G_DBUS_CALL_FLAGS_NONE,
-                                                               -1,
-                                                               fd_list,
-                                                               &out_fd_list,
-                                                               NULL,
-                                                               &error);
+        dbus_error_init(&error);
+        result = dbus_connection_send_with_reply_and_block(conn, msg, -1, &error);
 
-        g_object_unref(fd_list);
-
-        if (error) {
+        if (!result) {
             lua_pushnil(L);
-            lua_pushstring(L, error->message);
-            g_clear_error(&error);
-            return 2;
+            lua_pushstring(L, error.name);
+            lua_pushstring(L, error.message);
+            dbus_error_free(&error);
+            return 3;
         }
 
-        g_assert(result != NULL);
-        ret = push_tuple(L, result, out_fd_list);
-        if (out_fd_list)
-            g_object_unref(out_fd_list);
-        g_variant_unref(result);
+        ret = push_msg(L, result);
+        dbus_message_unref(result);
         return ret;
     }
+
+    g_debug("Out of mainloop");
 
     /* Remove callback + user_data */
     n_params -= 2;
@@ -174,159 +175,16 @@ static int bus_call(lua_State *L)
 
     /* Read parameters */
     if (n_params > 0)
-        params = range_to_tuple(L, 7, 7 + n_params, sig, fd_list);
+        range_to_msg(msg, L, 7, 7 + n_params, sig);
 
-    g_dbus_connection_call(conn,
-                           bus_name,
-                           object_path,
-                           interface_name,
-                           method_name,
-                           params, /* parameters */
-                           NULL, /* reply_type */
-                           G_DBUS_CALL_FLAGS_NONE,
-                           -1, /* default timeout */
-                           NULL /* cancellable */,
-                           call_callback,
-                           T);
+    ret = dbus_connection_send_with_reply(conn, msg, &pending_call, -1);
+    assert(ret);
 
-    g_object_unref(fd_list);
+    g_debug("set_notify");
+    ret = dbus_pending_call_set_notify(pending_call, call_callback, T, notify_delete);
+    assert(ret);
 
     return 0;
-}
-
-static int bus_introspect(lua_State *L)
-{
-    GDBusConnection *conn = get_conn(L, 1);
-    const char *bus_name = luaL_checkstring(L, 2);
-    const char *object_path = luaL_checkstring(L, 3);
-    const gchar *xml_data;
-    GDBusNodeInfo *node;
-    GVariant *result;
-    GError *error = NULL;
-    int i;
-    int m;
-
-    result = g_dbus_connection_call_sync(conn,
-                                         bus_name,
-                                         object_path,
-                                         "org.freedesktop.DBus.Introspectable",
-                                         "Introspect",
-                                         NULL,
-                                         G_VARIANT_TYPE("(s)"),
-                                         G_DBUS_CALL_FLAGS_NONE,
-                                         -1,
-                                         NULL,
-                                         &error);
-
-    if (!result) {
-        lua_pushnil(L);
-        lua_pushstring(L, error->message);
-        g_error_free(error);
-        return 2;
-    }
-
-    g_variant_get(result, "(&s)", &xml_data);
-
-    error = NULL;
-    node = g_dbus_node_info_new_for_xml(xml_data, &error);
-    g_variant_unref(result);
-
-    if (!node) {
-        lua_pushnil(L);
-        lua_pushstring(L, error->message);
-        g_error_free(error);
-        return 2;
-    }
-
-    lua_newtable(L);
-    if (node->interfaces) {
-        for (i = 0; node->interfaces[i] != NULL; i++) {
-            const GDBusInterfaceInfo *iface = node->interfaces[i];
-            lua_pushstring(L, iface->name);
-            lua_newtable(L);
-            if (iface->methods) {
-                for (m = 0; iface->methods[m] != NULL; m++) {
-                    GDBusMethodInfo *method = iface->methods[m];
-                    lua_pushstring(L, method->name);
-                    lua_rawseti(L, -2, m+1);
-                }
-            }
-            lua_rawset(L, -3);
-        }
-    }
-    return 1;
-}
-
-static GDBusArgInfo **add_args_info(lua_State *L, int tab_index, int arg_index)
-{
-    char *sig;
-    const char *startptr, *endptr;
-    GDBusArgInfo *arg_info;
-    GPtrArray *args = g_ptr_array_new();
-    gboolean ret = TRUE;
-
-    lua_rawgeti(L, tab_index, arg_index);
-    startptr = lua_tostring(L, -1);
-    while (*startptr != '\0' && (ret = g_variant_type_string_scan(startptr, NULL, &endptr))) {
-        sig = g_strndup(startptr, endptr - startptr);
-
-        arg_info = g_new0(GDBusArgInfo, 1);
-        g_ptr_array_add(args, arg_info);
-
-        arg_info->ref_count = 1;
-        arg_info->signature = sig;
-
-        startptr = endptr;
-    }
-
-    if (!ret)
-        g_error("Wrong signature");
-
-    lua_pop(L, 1);
-
-    g_ptr_array_add(args, NULL);
-    return (GDBusArgInfo **) g_ptr_array_free(args, FALSE);
-}
-
-static void add_method_info(lua_State *L, GPtrArray *methods)
-{
-    int index = lua_gettop(L);
-    const char *method_name = lua_tostring(L, -2);
-    GDBusMethodInfo *method_info = g_new0(GDBusMethodInfo, 1);
-    GDBusArgInfo **in_args;
-    GDBusArgInfo **out_args;
-
-    in_args = add_args_info(L, index, 1);
-    out_args = add_args_info(L, index, 2);
-
-    g_ptr_array_add(methods, method_info);
-    method_info->ref_count = 1;
-    method_info->name = g_strdup(method_name);
-    method_info->in_args = in_args;
-    method_info->out_args = out_args;
-}
-
-static GDBusInterfaceInfo *format_interface_info(lua_State *L, int index,
-                                                 const char *interface_name)
-{
-    GDBusInterfaceInfo *interface_info;
-    GPtrArray *methods = g_ptr_array_new();
-
-    lua_pushnil(L);
-    while (lua_next(L, index) != 0) {
-        g_debug("Parsing method: %s", lua_tostring(L, -2));
-        add_method_info(L, methods);
-        lua_pop(L, 1);
-    }
-
-    g_ptr_array_add(methods, NULL);
-
-    interface_info = g_new0(GDBusInterfaceInfo, 1);
-    interface_info->ref_count = 1;
-    interface_info->name = g_strdup(interface_name);
-    interface_info->methods = (GDBusMethodInfo **) g_ptr_array_free(methods, FALSE);
-
-    return interface_info;
 }
 
 /*
@@ -335,30 +193,31 @@ static GDBusInterfaceInfo *format_interface_info(lua_State *L, int index,
  */
 static int interface_method_return(lua_State *L)
 {
-    GDBusMethodInvocation *invocation;
-    const gchar *sender;
-    const gchar *object_path;
-    const gchar *interface_name;
-    const gchar *method_name;
+    DBusConnection *conn;
+    DBusMessage *msg;
     int i, n_args = lua_gettop(L);
-    GVariant *result;
     const char *out_sig;
-    GUnixFDList *fd_list = g_unix_fd_list_new();
+    DBusMessage *reply;
+    dbus_bool_t ret;
 
     luaL_argcheck(L, lua_istable(L, 1), 1, "table expected");
     lua_rawgeti(L, 1, 1);
     lua_rawgeti(L, 1, 2);
-    invocation = lua_touserdata(L, -2);
+    lua_rawgeti(L, 1, 3);
+    conn = lua_touserdata(L, -3);
+    msg = lua_touserdata(L, -2);
     out_sig = lua_tostring(L, -1);
-    lua_pop(L, 2);
-
-    sender = g_dbus_method_invocation_get_sender(invocation);
-    object_path = g_dbus_method_invocation_get_object_path(invocation);
-    interface_name = g_dbus_method_invocation_get_interface_name(invocation);
-    method_name = g_dbus_method_invocation_get_method_name(invocation);
+    lua_pop(L, 3);
 
     g_debug("%s: sender=%s object_path=%s interface_name=%s method_name=%s out_sig=%s",
-            __FUNCTION__, sender, object_path, interface_name, method_name, out_sig);
+            __FUNCTION__,
+            dbus_message_get_sender(msg), dbus_message_get_path(msg),
+            dbus_message_get_interface(msg), dbus_message_get_member(msg),
+            out_sig);
+
+    reply = dbus_message_new_method_return(msg);
+    assert(reply);
+    dbus_message_unref(msg);
 
     for (i = 2; i <= n_args; i++) {
         if (lua_type(L, i) == LUA_TSTRING)
@@ -367,83 +226,77 @@ static int interface_method_return(lua_State *L)
             g_debug("arg %d type=%s", i, lua_typename(L, lua_type(L, i)));
     }
 
-    result = range_to_tuple(L, 2, n_args + 1, out_sig, fd_list);
-
-    g_dbus_method_invocation_return_value_with_unix_fd_list(invocation, result, fd_list);
-
-    g_object_unref(fd_list);
+    range_to_msg(reply, L, 2, n_args + 1, out_sig);
+    ret = dbus_connection_send(conn, reply, NULL);
+    assert(ret);
 
     return 0;
 }
 
-struct object_ud {
-    struct easydbus_state *state;
-    int ref;
-};
-
-static void object_ud_free(gpointer user_data)
+static DBusHandlerResult interface_method_call(DBusConnection *connection,
+                                               DBusMessage *msg,
+                                               void *data)
 {
-    struct object_ud *obj_ud = user_data;
-    struct easydbus_state *state = obj_ud->state;
-
-    g_debug("%s: %p", __FUNCTION__, user_data);
-
-    luaL_unref(state->L, LUA_REGISTRYINDEX, obj_ud->ref);
-
-    g_free(user_data);
-}
-
-static void interface_method_call(GDBusConnection *connection,
-                                  const gchar *sender,
-                                  const gchar *object_path,
-                                  const gchar *interface_name,
-                                  const gchar *method_name,
-                                  GVariant *parameters,
-                                  GDBusMethodInvocation *invocation,
-                                  gpointer user_data)
-{
-    struct object_ud *obj_ud = user_data;
-    struct easydbus_state *state = obj_ud->state;
-    int ref = obj_ud->ref;
+    struct easydbus_state *state = data;
+    const char *path = dbus_message_get_path(msg);
+    const char *interface = dbus_message_get_interface(msg);
+    const char *method = dbus_message_get_member(msg);
     lua_State *T;
     int ret;
     int n_args;
     int n_params;
     int i;
-    GDBusMessage *message;
-    GUnixFDList *fd_list;
 
-    g_debug("%s: sender=%s object_path=%s interface_name=%s method_name=%s",
-            __FUNCTION__, sender, object_path, interface_name, method_name);
+    g_debug("%s: sender=%s object_path=%s interface_name=%s method_name=%s type=%d",
+            __FUNCTION__,
+            dbus_message_get_sender(msg), path, interface, method, (int) dbus_message_get_type(msg));
+
+    if (dbus_message_get_type(msg) != DBUS_MESSAGE_TYPE_METHOD_CALL)
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 
     T = lua_newthread(state->L);
 
     /* push callback with args */
-    lua_rawgeti(T, LUA_REGISTRYINDEX, ref);
-    lua_pushstring(T, method_name);
-    lua_rawget(T, 1);
-    if (!lua_istable(T, 2))
-        luaL_error(T, "No %s in methods lookup", method_name);
+    lua_pushlightuserdata(T, connection);
+    lua_rawget(T, LUA_REGISTRYINDEX);
+    lua_rawgeti(T, -1, 2);
 
-    n_args = lua_rawlen(T, 2);
+    lua_pushstring(T, path);
+    lua_rawget(T, -2);
+    if (!lua_istable(T, -1))
+        luaL_error(T, "No % in path lookup", path);
+
+    lua_pushstring(T, interface);
+    lua_rawget(T, -2);
+    if (!lua_istable(T, -1))
+        luaL_error(T, "No %s in interface lookup", interface);
+
+    lua_pushstring(T, method);
+    lua_rawget(T, -2);
+    if (!lua_istable(T, -1))
+        luaL_error(T, "No %s in method lookup", method);
+
+    n_args = lua_rawlen(T, 5);
     for (i = 3; i <= n_args; i++) {
-        lua_rawgeti(T, 2, i);
+        lua_rawgeti(T, 5, i);
         if (lua_type(T, -1) == LUA_TSTRING)
             g_debug("arg %d: %s", i, lua_tostring(T, -1));
         else
             g_debug("arg %d: %s", i, lua_typename(T, lua_type(T, -1)));
     }
 
+    dbus_message_ref(msg);
+
     /* push params */
-    message = g_dbus_method_invocation_get_message(invocation);
-    fd_list = g_dbus_message_get_unix_fd_list(message);
-    n_params = push_tuple(T, parameters, fd_list);
+    n_params = push_msg(T, msg);
     lua_pushcclosure(T, interface_method_return, 0);
-    lua_createtable(T, 2, 0);
-    lua_pushlightuserdata(T, invocation);
+    lua_createtable(T, 3, 0);
+    lua_pushlightuserdata(T, connection);
     lua_rawseti(T, -2, 1);
-    lua_rawgeti(T, 2, 2); /* out_sig */
+    lua_pushlightuserdata(T, msg);
     lua_rawseti(T, -2, 2);
+    lua_rawgeti(T, 5, 2); /* out_sig */
+    lua_rawseti(T, -2, 3);
     ret = ed_resume(T, n_args + n_params - 1);
 
     if (ret) {
@@ -454,253 +307,47 @@ static void interface_method_call(GDBusConnection *connection,
     }
 
     lua_pop(state->L, 1);
+
+    return DBUS_HANDLER_RESULT_HANDLED;
 }
 
-static const GDBusInterfaceVTable interface_vtable = {
-    interface_method_call,
-    NULL,
-    NULL,
-    {0}
+static const DBusObjectPathVTable interface_vtable = {
+    .message_function = interface_method_call,
 };
-
-static int bus_register_object(lua_State *L)
-{
-    struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
-    GDBusConnection *conn = get_conn(L, 1);
-    const char *object_path = luaL_checkstring(L, 2);
-    const char *interface_name = luaL_checkstring(L, 3);
-    GDBusInterfaceInfo *interface_info;
-    GError *error = NULL;
-    guint reg_id;
-    struct object_ud *obj_ud;
-
-    g_debug("%s", __FUNCTION__);
-    g_debug("object_path=%s interface_name=%s", object_path, interface_name);
-
-    luaL_argcheck(L, lua_istable(L, 4), 4, "Is not a table");
-
-    interface_info = format_interface_info(L, 4, interface_name);
-
-    /* Prepare method lookup table */
-    lua_settop(L, 4);
-
-    obj_ud = g_new(struct object_ud, 1);
-    obj_ud->ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    obj_ud->state = state;
-
-    reg_id = g_dbus_connection_register_object(conn,
-                                               object_path,
-                                               interface_info,
-                                               &interface_vtable,
-                                               obj_ud, /* user_data */
-                                               object_ud_free,
-                                               &error);
-
-    g_dbus_interface_info_unref(interface_info);
-
-    if (!reg_id) {
-        lua_pushnil(L);
-        lua_pushstring(L, error->message);
-        g_error_free(error);
-        return 2;
-    }
-
-    lua_pushinteger(L, reg_id);
-    return 1;
-}
-
-static int bus_unregister_object(lua_State *L)
-{
-    GDBusConnection *conn = get_conn(L, 1);
-    guint reg_id = luaL_checkinteger(L, 2);
-    gboolean ret;
-
-    ret = g_dbus_connection_unregister_object(conn, reg_id);
-
-    lua_pushboolean(L, ret ? 1 : 0);
-    return 1;
-}
-
-struct own_name_ud {
-    struct easydbus_state *state;
-    lua_State *L;
-    gboolean handled;
-    GMainLoop *loop;
-    gboolean success;
-    guint owner_id;
-};
-
-static void own_name_ud_free(gpointer user_data)
-{
-    struct own_name_ud *own_name_ud = user_data;
-    struct easydbus_state *state = own_name_ud->state;
-    lua_State *L = own_name_ud->L;
-
-    lua_pushlightuserdata(state->L, L);
-    lua_pushnil(state->L);
-    lua_rawset(state->L, LUA_REGISTRYINDEX);
-
-    g_free(user_data);
-}
-
-static void name_acquired(GDBusConnection *conn,
-                          const gchar *name,
-                          gpointer user_data)
-{
-    struct own_name_ud *own_name_ud = user_data;
-    lua_State *L = own_name_ud->L;
-
-    g_debug("Acquired name: %s, handled=%d", name, (int) own_name_ud->handled);
-
-    if (own_name_ud->handled)
-        return;
-
-    own_name_ud->handled = TRUE;
-
-    if (own_name_ud->loop) {
-        own_name_ud->success = TRUE;
-        g_main_loop_quit(own_name_ud->loop);
-        return;
-    }
-
-    lua_pushvalue(L, -2);
-    lua_pushvalue(L, -2);
-
-    lua_pushinteger(L, own_name_ud->owner_id);
-    ed_resume(L, 2);
-
-    g_debug("after acquired callback");
-}
-
-static void name_lost(GDBusConnection *conn,
-                      const gchar *name,
-                      gpointer user_data)
-{
-    struct own_name_ud *own_name_ud = user_data;
-    lua_State *L = own_name_ud->L;
-
-    g_debug("Lost name: %s, handled=%d", name, (int) own_name_ud->handled);
-
-    if (own_name_ud->handled)
-        return;
-
-    own_name_ud->handled = TRUE;
-
-    if (own_name_ud->loop) {
-        g_main_loop_quit(own_name_ud->loop);
-        return;
-    }
-
-    lua_pushvalue(L, -2);
-    lua_pushvalue(L, -2);
-
-    lua_pushboolean(L, 0);
-    ed_resume(L, 2);
-
-    g_debug("after lost callback");
-}
-
-static int bus_own_name(lua_State *L)
-{
-    struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
-    GDBusConnection *conn = get_conn(L, 1);
-    const char *name = luaL_checkstring(L, 2);
-    lua_State *T;
-    int i, n_args = lua_gettop(L);
-    struct own_name_ud *own_name_ud;
-
-    g_debug("%s", __FUNCTION__);
-
-    own_name_ud = g_new0(struct own_name_ud, 1);
-    own_name_ud->state = state;
-    own_name_ud->L = T = lua_newthread(L);
-
-    if (!in_mainloop(state)) {
-        own_name_ud->owner_id =
-            g_bus_own_name_on_connection(conn,
-                                         name,
-                                         G_BUS_NAME_OWNER_FLAGS_NONE,
-                                         name_acquired,
-                                         name_lost,
-                                         own_name_ud,
-                                         own_name_ud_free);
-
-        own_name_ud->loop = g_main_loop_new(NULL, FALSE);
-        g_main_loop_run(own_name_ud->loop);
-        g_main_loop_unref(own_name_ud->loop);
-        own_name_ud->loop = NULL;
-
-        if (own_name_ud->success)
-            lua_pushinteger(L, own_name_ud->owner_id);
-        else
-            lua_pushboolean(L, 0);
-        return 1;
-    }
-
-    for (i = 1; i <= n_args; i++) {
-        lua_pushvalue(L, i);
-    }
-    lua_xmove(L, T, n_args);
-
-    lua_pushlightuserdata(L, T);
-    lua_pushvalue(L, -2);
-    lua_rawset(L, LUA_REGISTRYINDEX);
-    lua_pop(L, 1);
-
-    own_name_ud->owner_id =
-        g_bus_own_name_on_connection(conn,
-                                     name,
-                                     G_BUS_NAME_OWNER_FLAGS_NONE,
-                                     name_acquired,
-                                     name_lost,
-                                     own_name_ud,
-                                     own_name_ud_free);
-
-    return 0;
-}
-
-static int bus_unown_name(lua_State *L)
-{
-    guint owner_id = luaL_checkinteger(L, 2);
-
-    g_bus_unown_name(owner_id);
-
-    return 0;
-}
 
 static int bus_emit(lua_State *L)
 {
-    GDBusConnection *conn = get_conn(L, 1);
+    DBusConnection *conn = get_conn(L, 1);
+    DBusMessage *msg;
     const char *listener = lua_tostring(L, 2);
     const char *object_path = luaL_checkstring(L, 3);
     const char *interface_name = luaL_checkstring(L, 4);
     const char *signal_name = luaL_checkstring(L, 5);
     const char *sig = lua_tostring(L, 6);
-    GVariant *params;
-    GError *error = NULL;
+    dbus_bool_t ret;
 
     g_debug("%s: listener=%s object_path=%s interface_name=%s signal_name=%s sig=%s",
             __FUNCTION__, listener, object_path, interface_name, signal_name, sig);
 
     if (listener)
-        luaL_argcheck(L, g_dbus_is_name(listener), 2, "Invalid listener name");
-    luaL_argcheck(L, g_variant_is_object_path(object_path), 3, "Invalid object path");
-    luaL_argcheck(L, g_dbus_is_interface_name(interface_name), 4, "Invalid interface name");
+        luaL_argcheck(L, dbus_validate_bus_name(listener, NULL), 2, "Invalid listener name");
+    luaL_argcheck(L, dbus_validate_path(object_path, NULL), 3, "Invalid object path");
+    luaL_argcheck(L, dbus_validate_interface(interface_name, NULL), 4, "Invalid interface name");
 
-    params = range_to_tuple(L, 7, lua_gettop(L) + 1, sig, NULL);
+    msg = dbus_message_new_signal(object_path, interface_name, signal_name);
+    if (listener) {
+        dbus_bool_t ret = dbus_message_set_destination(msg, listener);
+        assert(ret);
+    }
 
-    g_dbus_connection_emit_signal(conn,
-                                  listener,
-                                  object_path,
-                                  interface_name,
-                                  signal_name,
-                                  params,
-                                  &error);
+    range_to_msg(msg, L, 7, lua_gettop(L) + 1, sig);
 
-    if (error != NULL) {
+    ret = dbus_connection_send(conn, msg, NULL);
+    dbus_message_unref(msg);
+
+    if (!ret) {
         lua_pushnil(L);
-        lua_pushstring(L, error->message);
-        g_error_free(error);
+        lua_pushliteral(L, "Out of memory");
         return 2;
     }
 
@@ -708,119 +355,221 @@ static int bus_emit(lua_State *L)
     return 1;
 }
 
-static void signal_callback(GDBusConnection *conn,
-                            const gchar *sender_name,
-                            const gchar *object_name,
-                            const gchar *interface_name,
-                            const gchar *signal_name,
-                            GVariant *parameters,
-                            gpointer user_data)
+static DBusHandlerResult signal_callback(DBusConnection *conn,
+                                         DBusMessage *msg,
+                                         void *data)
 {
-    struct object_ud *obj_ud = user_data;
-    struct easydbus_state *state = obj_ud->state;
-    int ref = obj_ud->ref;
+    struct easydbus_state *state = data;
+    const char *path = dbus_message_get_path(msg);
+    const char *interface = dbus_message_get_interface(msg);
+    const char *signal = dbus_message_get_member(msg);
     int n_args;
     lua_State *L;
     int ret;
     int i;
 
-    g_debug("%s", __FUNCTION__);
+    g_debug("%s: path=%s interface=%s signal=%s", __FUNCTION__, path, interface, signal);
+
+    if (dbus_message_get_type(msg) != DBUS_MESSAGE_TYPE_SIGNAL)
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 
     L = lua_newthread(state->L);
 
-    lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
-    n_args = lua_rawlen(L, 1);
-    for (i = 1; i <= n_args; i++) {
-        lua_rawgeti(L, 1, i);
+    lua_pushlightuserdata(L, conn);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_rawgeti(L, -1, 3);
+    lua_pushfstring(L, "%s:%s:%s", path, interface, signal);
+    lua_rawget(L, -2);
+    if (!lua_istable(L, -1)) {
+        g_debug("No such handler");
+        lua_pop(state->L, 1);
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
     }
 
-    ret = ed_resume(L, n_args + push_tuple(L, parameters, NULL) - 1);
+    n_args = lua_rawlen(L, 3);
+    for (i = 1; i <= n_args; i++) {
+        lua_rawgeti(L, 3, i);
+        if (lua_type(L, -1) == LUA_TSTRING)
+            g_debug("arg %d: %s", i, lua_tostring(L, -1));
+        else
+            g_debug("arg %d: %s", i, lua_typename(L, lua_type(L, -1)));
+    }
+
+    ret = ed_resume(L, n_args + push_msg(L, msg) - 1);
     if (ret && ret != LUA_YIELD)
         g_warning("signal handler error: %s", lua_tostring(L, -1));
 
     lua_pop(state->L, 1);
-}
 
-static int bus_subscribe(lua_State *L)
-{
-    struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
-    GDBusConnection *conn = get_conn(L, 1);
-    const char *sender = lua_tostring(L, 2);
-    const char *object_path = lua_tostring(L, 3);
-    const char *interface_name = lua_tostring(L, 4);
-    const char *signal_name = lua_tostring(L, 5);
-    int n_params = lua_gettop(L);
-    struct object_ud *obj_ud = g_new(struct object_ud, 1);
-    guint ref_id;
-    int i;
-
-    luaL_argcheck(L, !lua_isnoneornil(L, 6), 6, "Signal handler not specified");
-
-    g_debug("%s", __FUNCTION__);
-
-    lua_createtable(L, n_params - 5, 0);
-
-    for (i = 6; i <= n_params; i++) {
-        lua_pushvalue(L, i);
-        lua_rawseti(L, -2, i - 5);
-    }
-
-    obj_ud->ref = luaL_ref(L, LUA_REGISTRYINDEX);
-    obj_ud->state = state;
-
-    ref_id = g_dbus_connection_signal_subscribe(conn,
-                                                sender,
-                                                interface_name,
-                                                signal_name,
-                                                object_path,
-                                                NULL, /* arg0 */
-                                                G_DBUS_SIGNAL_FLAGS_NONE,
-                                                signal_callback,
-                                                obj_ud,
-                                                object_ud_free);
-
-    lua_pushinteger(L, ref_id);
-    return 1;
-}
-
-static int bus_unsubscribe(lua_State *L)
-{
-    GDBusConnection *conn = get_conn(L, 1);
-    guint ref_id = luaL_checkinteger(L, 2);
-
-    g_debug("%s", __FUNCTION__);
-
-    g_dbus_connection_signal_unsubscribe(conn, ref_id);
-
-    return 0;
+    return DBUS_HANDLER_RESULT_HANDLED;
 }
 
 luaL_Reg bus_funcs[] = {
     {"call", bus_call},
-    {"introspect", bus_introspect},
-    {"register_object", bus_register_object},
-    {"unregister_object", bus_unregister_object},
-    {"own_name", bus_own_name},
-    {"unown_name", bus_unown_name},
     {"emit", bus_emit},
-    {"subscribe", bus_subscribe},
-    {"unsubscribe", bus_unsubscribe},
     {NULL, NULL},
 };
 
-int new_conn(lua_State *L, GBusType bus_type)
+static int flags_dbus_to_ev(unsigned int flags)
 {
-    GError *error = NULL;
-    GDBusConnection *conn;
+    int events = 0;
 
-    conn = g_bus_get_sync(bus_type, NULL, &error);
-    g_assert_no_error(error);
+    if (flags & DBUS_WATCH_READABLE)
+        events |= EV_READ;
+    if (flags & DBUS_WATCH_WRITABLE)
+        events |= EV_WRITE;
 
-    lua_createtable(L, 1, 0);
+    return events;
+}
 
+static unsigned int flags_ev_to_dbus(int events)
+{
+    unsigned int flags = 0;
+
+    if (events & EV_READ)
+        flags |= DBUS_WATCH_READABLE;
+    if (events & EV_WRITE)
+        flags |= DBUS_WATCH_WRITABLE;
+
+    return flags;
+}
+
+struct ev_io_wrap {
+    struct ev_io io;
+    DBusWatch *watch;
+    DBusConnection *conn;
+};
+
+struct ev_loop_wrap {
+    struct ev_loop *loop;
+    struct DBusConnection *conn;
+};
+
+static void io_cb(struct ev_loop *loop, struct ev_io *io, int revents)
+{
+    struct ev_io_wrap *io_wrap = container_of(io, struct ev_io_wrap, io);
+    dbus_bool_t ret;
+
+    g_debug("io_cb %p %d %d", (void *) io_wrap->watch, dbus_watch_get_unix_fd(io_wrap->watch), revents);
+
+    ret = dbus_watch_handle(io_wrap->watch, flags_ev_to_dbus(revents));
+    assert(ret);
+
+    g_debug("io_cb dispatch");
+    while (dbus_connection_dispatch(io_wrap->conn) == DBUS_DISPATCH_DATA_REMAINS)
+        ;
+
+    g_debug("io_cb exit");
+}
+
+static dbus_bool_t watch_add(DBusWatch *watch, void *data)
+{
+    struct ev_loop_wrap *loop_wrap = data;
+    struct ev_loop *loop = loop_wrap->loop;
+    DBusConnection *conn = loop_wrap->conn;
+    unsigned int flags;
+    struct ev_io_wrap *io_wrap = malloc(sizeof(*io_wrap));
+    struct ev_io *io;
+    assert(io_wrap);
+
+    io = &io_wrap->io;
+    io_wrap->watch = watch;
+    io_wrap->conn = conn;
+    flags = dbus_watch_get_flags(watch);
+
+    g_debug("%s: %p %p %d %u", __FUNCTION__, (void *) watch, (void *) io, dbus_watch_get_unix_fd(watch), flags);
+
+    ev_io_init(io, io_cb, dbus_watch_get_unix_fd(watch),
+               flags_dbus_to_ev(flags));
+
+    if (dbus_watch_get_enabled(watch))
+        ev_io_start(loop, io);
+
+    dbus_watch_set_data(watch, io_wrap, NULL);
+
+    return TRUE;
+}
+
+static void watch_remove(DBusWatch *watch, void *data)
+{
+    struct ev_loop_wrap *loop_wrap = data;
+    struct ev_loop *loop = loop_wrap->loop;
+    struct ev_io_wrap *io_wrap = dbus_watch_get_data(watch);
+    struct ev_io *io = &io_wrap->io;
+
+    g_debug("%s: %p\n", __FUNCTION__, (void *) io);
+
+    ev_io_stop(loop, io);
+    free(io);
+}
+
+static void watch_toggle(DBusWatch *watch, void *data)
+{
+    struct ev_loop_wrap *loop_wrap = data;
+    struct ev_loop *loop = loop_wrap->loop;
+    struct ev_io_wrap *io_wrap = dbus_watch_get_data(watch);
+    struct ev_io *io = &io_wrap->io;
+
+    g_debug("%s: %p\n", __FUNCTION__, (void *) io);
+
+    if (dbus_watch_get_enabled(watch))
+        ev_io_start(loop, io);
+    else
+        ev_io_stop(loop, io);
+}
+
+int new_conn(lua_State *L, DBusBusType bus_type)
+{
+    struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
+    struct ev_loop *loop = state->loop;
+    DBusConnection *conn = dbus_bus_get(bus_type, NULL);
+    struct ev_loop_wrap *loop_wrap;
+    assert(conn);
+
+    /* Check if there is already bus registered */
+    lua_pushlightuserdata(L, conn);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    if (!lua_isnil(L, -1)) {
+        g_debug("There is already a connection");
+        dbus_connection_unref(conn);
+        return 1;
+    }
+
+    loop_wrap = malloc(sizeof(*loop_wrap));
+    assert(loop_wrap);
+    loop_wrap->loop = loop;
+    loop_wrap->conn = conn;
+
+    dbus_connection_register_fallback(conn, "/", &interface_vtable, state);
+    dbus_connection_add_filter(conn, signal_callback, state, NULL);
+
+    dbus_connection_set_exit_on_disconnect(conn, FALSE);
+    dbus_connection_set_watch_functions(conn, watch_add, watch_remove,
+                                        watch_toggle, loop_wrap, free);
+
+    /* Create table with conn userdata, method and signal handlers */
+    lua_createtable(L, 3, 0);
+    lua_pushlightuserdata(L, conn);
+    lua_pushvalue(L, -2);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    /* Push conn userdata */
     lua_pushlightuserdata(L, conn);
     lua_rawseti(L, -2, 1);
 
+    /* Push method handlers */
+    lua_newtable(L);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -3, "handlers");
+    lua_rawseti(L, -2, 2);
+
+    /* Push signals handlers */
+    lua_newtable(L);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -3, "signals");
+    lua_rawseti(L, -2, 3);
+
+    /* Set metatable */
     lua_pushlightuserdata(L, BUS_MT);
     lua_rawget(L, LUA_REGISTRYINDEX);
 

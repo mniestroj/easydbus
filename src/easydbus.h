@@ -10,16 +10,19 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
+#include <dbus/dbus.h>
+#include <ev.h>
+#include <stdbool.h>
+
 #include <gio/gio.h>
 
+#define container_of(ptr, type, member) ({                              \
+            const typeof( ((type *)0)->member ) *__mptr = (ptr);        \
+            (type *)( (char *)__mptr - offsetof(type,member) );})
+
 struct easydbus_state {
-    GMainContext *context;
-    GMainLoop *loop;
-    GPollFD *fds;
-    gint allocated_nfds;
-    gint nfds;
-    gint max_priority;
-    gint timeout;
+    struct ev_loop *loop;
+    bool in_mainloop;
     int ref_cb;
     lua_State *L;
 };

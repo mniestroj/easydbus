@@ -54,12 +54,24 @@ local function object_method_wrapper(func, ...)
 end
 function object_mt:add_method(method_name, in_sig, out_sig, func, ...)
    assert(func ~= nil, 'Method handler not specified')
-   self.methods[method_name] = {in_sig, out_sig, object_method_wrapper, func, ...}
+   local handlers = self.bus.handlers
+   local path = handlers[self.path]
+   if not path then
+      path = {}
+      handlers[self.path] = path
+   end
+   local interface = path[self.interface]
+   if not interface then
+      interface = {}
+      path[self.interface] = interface
+   end
+   interface[method_name] = {in_sig, out_sig, object_method_wrapper, func, ...}
 end
 
-local function create_object(_, path, interface)
+local function create_object(_, bus, path, interface)
    local object = {}
    object = {
+      bus = bus,
       path = path,
       interface = interface,
       methods = {},
@@ -70,47 +82,19 @@ end
 
 setmetatable(object_mt, {__call = create_object})
 
-dbus.object = object_mt
+dbus.bus.object = object_mt
 
--- EObject
-local EObject_mt = {}
-EObject_mt.__index = EObject_mt
-
-function EObject_mt:add_method(interface, ...)
-   local obs = self.objects
-   if not obs[interface] then
-      obs[interface] = create_object(nil, self.path, interface)
-   end
-   obs[interface]:add_method(...)
-end
-
-local function create_EObject(_, path)
-   local EObject = {
-      path = path,
-      objects = {},
-   }
-   setmetatable(EObject, EObject_mt)
-   return EObject
-end
-
-setmetatable(EObject_mt, {__call = create_EObject})
-
-dbus.EObject = EObject_mt
-
-local old_register_object = dbus.bus.register_object
-function dbus.bus:register_object(object)
-   local mt = getmetatable(object)
-   if mt == object_mt then
-      return old_register_object(self, object.path, object.interface, object.methods)
-   elseif mt == EObject_mt then
-      for _,obj in pairs(object.objects) do
-         local ret = old_register_object(self, obj.path, obj.interface, obj.methods)
-         if not ret then
-            return ret
-         end
-      end
-      return true
-   end
+-- subscribe signal
+local s_format = string.format
+function dbus.bus:subscribe(path, interface, signal, func, ...)
+   assert(type(path) == 'string', 'Invalid path: ' .. tostring(path))
+   assert(type(interface) == 'string', 'Invalid interface: ' .. tostring(interface))
+   assert(type(signal) == 'string', 'Invalid signal: ' .. tostring(signal))
+   assert(func ~= nil, 'Subscribe callback is nil')
+   local signals = self.signals
+   signals[s_format('%s:%s:%s', path, interface, signal)] = {func, ...}
+   self:call('org.freedesktop.DBus', '/', 'org.freedesktop.DBus', 'AddMatch', 's',
+             s_format("type='signal',path='%s',interface='%s',member='%s'", path, interface, signal))
 end
 
 -- add_callback
@@ -170,9 +154,39 @@ function dbus.bus.send_signal(bus, ...)
    return bus:emit(false, ...)
 end
 
--- simpledbus-like request_name
-function dbus.bus:request_name(...)
-   return self:own_name(...)
+-- Request / release name
+function dbus.bus:request_name(name, flags)
+   return self:call('org.freedesktop.DBus', '/', 'org.freedesktop.DBus', 'RequestName', 'su', name, flags or 0)
+end
+
+function dbus.bus:release_name(name)
+   return self:call('org.freedesktop.DBus', '/', 'org.freedesktop.DBus', 'ReleaseName', 'su', name)
+end
+
+function dbus.bus:own_name(name)
+   local flags = self:request_name(name, dbus.DBUS_NAME_FLAG_DO_NOT_QUEUE)
+   if flags == dbus.DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER then
+      return true
+   elseif flags == dbus.DBUS_REQUEST_NAME_REPLY_ALREADY_OWNER then
+      return nil, "Service is already primary owner"
+   elseif flags == dbus.DBUS_REQUEST_NAME_REPLY_EXISTS then
+      return nil, "Service name is already in queue"
+   else
+      return nil, "Unknown error"
+   end
+end
+
+function dbus.bus:unown_name(name)
+   local flags = self:release_name(name)
+   if flags == dbus.DBUS_RELEASE_NAME_REPLY_RELEASED then
+      return true
+   elseif flags == dbus.DBUS_RELEASE_NAME_REPLY_NON_EXISTENT then
+      return nil, "Given name doesn't exist on the bus"
+   elseif flags == dbus.DBUS_RELEASE_NAME_REPLY_NOT_OWNER then
+      return nil, "Service is not an owner of a given name"
+   else
+      return nil, "Unknown error"
+   end
 end
 
 -- dbus types
