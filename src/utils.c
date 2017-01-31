@@ -143,7 +143,7 @@ static int push_iter(DBusMessageIter *msg_iter, lua_State *L)
         break;
     }
     default:
-        g_warning("Unrecognized type!");
+        g_warning("Unrecognized type! %d (%c)", msg_type, (char) msg_type);
         return 0;
     }
 
