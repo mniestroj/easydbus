@@ -404,6 +404,169 @@ static DBusHandlerResult signal_callback(DBusConnection *conn,
     return DBUS_HANDLER_RESULT_HANDLED;
 }
 
+struct sb {
+    char *str;
+    size_t len;
+    size_t offset;
+};
+
+#define SB_STEP 4096
+
+static void sb_init(struct sb *sb)
+{
+    sb->str = malloc(SB_STEP);
+    sb->len = SB_STEP;
+    sb->offset = 0;
+}
+
+static void sb_free(struct sb *sb)
+{
+    free(sb->str);
+}
+
+static void sb_addstring(struct sb *sb, const char *chunk)
+{
+    size_t chunk_len = strlen(chunk);
+
+    if (chunk_len + sb->offset > sb->len) {
+        sb->len += SB_STEP;
+        sb->str = realloc(sb->str, sb->len);
+    }
+
+    strcpy(sb->str + sb->offset, chunk);
+    sb->offset += chunk_len;
+}
+
+static void introspect_handler(DBusConnection *conn,
+                               DBusMessage *msg,
+                               const char *path,
+                               struct easydbus_state *state)
+{
+    DBusMessage *reply;
+    DBusMessageIter msg_iter;
+    lua_State *L = state->L;
+    int top = lua_gettop(L);
+    size_t path_len = strlen(path);
+    struct sb b;
+
+    reply = dbus_message_new_method_return(msg);
+    dbus_message_iter_init_append(reply, &msg_iter);
+
+    sb_init(&b);
+    sb_addstring(&b, "<!DOCTYPE node PUBLIC \"-//freedesktop//DTD D-BUS Object Introspection 1.0//EN\"\n"
+                 "\"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd\">\n"
+                 "<node>\n");
+
+    lua_pushlightuserdata(L, conn);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_rawgeti(L, -1, 2);
+
+    lua_pushstring(L, path);
+    lua_rawget(L, -2);
+
+    if (lua_istable(L, -1)) {
+        lua_pushnil(L);
+        while (lua_next(L, -2)) {
+            const char *interface = lua_tostring(L, -2);
+
+            printf("%s: adding interface name %s\n", __FUNCTION__, interface);
+
+            sb_addstring(&b, "  <interface name=\"");
+            sb_addstring(&b, interface);
+            sb_addstring(&b, "\">\n");
+
+            lua_pushnil(L);
+            while (lua_next(L, -2)) {
+                const char *method = lua_tostring(L, -2);
+                const char *in_sig;
+                const char *out_sig;
+
+                sb_addstring(&b, "    <method name=\"");
+                sb_addstring(&b, method);
+                sb_addstring(&b, "\">\n");
+
+                lua_rawgeti(L, -1, 1);
+                in_sig = lua_tostring(L, -1);
+                if (in_sig && in_sig[0] != '\0') {
+                    sb_addstring(&b, "      <arg type=\"");
+                    sb_addstring(&b, in_sig);
+                    sb_addstring(&b, "\" direction=\"in\"/>\n");
+                }
+                lua_pop(L, 1);
+
+                lua_rawgeti(L, -1, 2);
+                out_sig = lua_tostring(L, -1);
+                if (out_sig && out_sig[0] != '\0') {
+                    sb_addstring(&b, "      <arg type=\"");
+                    sb_addstring(&b, in_sig);
+                    sb_addstring(&b, "\" direction=\"out\"/>\n");
+                }
+                lua_pop(L, 1);
+
+                sb_addstring(&b, "    </method>\n");
+
+                lua_pop(L, 1);
+            }
+
+            sb_addstring(&b, "  </interface>\n");
+
+            lua_pop(L, 1);
+        }
+    }
+    lua_pop(L, 1);
+
+    lua_pushnil(L);
+    while (lua_next(L, top + 2)) {
+        const char *key = lua_tostring(L, -2);
+
+        printf("%s: Found path %s\n", __FUNCTION__, key);
+
+        if (!strncmp(path, key, path_len)) {
+            size_t key_len = strlen(key);
+
+            if (key_len > path_len && !strchr(key + path_len, '/')) {
+                /* This is a direct subnode */
+                printf("%s: Found direct subnode\n", __FUNCTION__);
+                sb_addstring(&b, key + path_len);
+            }
+        }
+
+        lua_pop(L, 1);
+    }
+
+    lua_settop(L, top);
+
+    sb_addstring(&b, "</node>\n");
+    dbus_message_iter_append_basic(&msg_iter, DBUS_TYPE_STRING, &b.str);
+    sb_free(&b);
+
+    dbus_connection_send(conn, reply, NULL);
+}
+
+static DBusHandlerResult standard_methods_callback(DBusConnection *conn,
+                                                   DBusMessage *msg,
+                                                   void *data)
+{
+    struct easydbus_state *state = data;
+    const char *path = dbus_message_get_path(msg);
+    const char *interface = dbus_message_get_interface(msg);
+    const char *method = dbus_message_get_member(msg);
+
+    if (dbus_message_get_type(msg) != DBUS_MESSAGE_TYPE_METHOD_CALL)
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+
+    g_debug("%s: path=%s interface=%s method=%s", __FUNCTION__, path, interface, method);
+
+    if (!strcmp(interface, DBUS_INTERFACE_INTROSPECTABLE)) {
+        if (!strcmp(method, "Introspect")) {
+            introspect_handler(conn, msg, path, state);
+            return DBUS_HANDLER_RESULT_HANDLED;
+        }
+    }
+
+    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+}
+
 luaL_Reg bus_funcs[] = {
     {"call", bus_call},
     {"emit", bus_emit},
@@ -542,6 +705,7 @@ int new_conn(lua_State *L, DBusBusType bus_type)
 
     dbus_connection_register_fallback(conn, "/", &interface_vtable, state);
     dbus_connection_add_filter(conn, signal_callback, state, NULL);
+    dbus_connection_add_filter(conn, standard_methods_callback, state, NULL);
 
     dbus_connection_set_exit_on_disconnect(conn, FALSE);
     dbus_connection_set_watch_functions(conn, watch_add, watch_remove,
