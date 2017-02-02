@@ -329,7 +329,7 @@ static GVariant *to_variant(lua_State *L, int index, const char *sig, GUnixFDLis
                         array_sig = "ad";
                     break;
                 default:
-                    array_sig = "ai";
+                    array_sig = "av";
                 }
                 lua_pop(L, 1);
                 value = to_array(L, index, array_sig, fd_list);
