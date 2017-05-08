@@ -242,4 +242,13 @@ dbus.type.variant = function(val)
    return dbus.type(val, 'v')
 end
 
+function dbus.assert(...)
+   local value, name, message = ...
+   if value then
+      return ...
+   else
+      error(tostring(name) .. ': ' .. tostring(message), 2)
+   end
+end
+
 return dbus
