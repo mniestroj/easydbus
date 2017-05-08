@@ -29,26 +29,48 @@ static DBusConnection *get_conn(lua_State *L, int index)
     return conn;
 }
 
+static void dump_arg(lua_State *L, int print_index, int real_index)
+{
+    if (lua_type(L, real_index) == LUA_TSTRING)
+        g_debug("arg %d: %s", print_index, lua_tostring(L, real_index));
+    else
+        g_debug("arg %d: type=%s", print_index,
+                lua_typename(L, lua_type(L, real_index)));
+}
+
+static void dump_args(lua_State *L, int start_index, int stop_index)
+{
+    int i;
+
+    for (i = start_index; i <= stop_index; i++)
+        dump_arg(L, i, i);
+}
+
+static void unpack_table(lua_State *L, int table_index,
+                         int start_index, int stop_index)
+{
+    int i;
+
+    for (i = start_index; i <= stop_index; i++) {
+        lua_rawgeti(L, table_index, i);
+
+        dump_arg(L, i, -1);
+    }
+}
+
 static void call_callback(DBusPendingCall *pending_call, void *data)
 {
     lua_State *T = data;
     //DBusConnection *conn = lua_touserdata(T, 1);
-    int i;
     int n_args = lua_gettop(T);
     DBusMessage *msg = dbus_pending_call_steal_reply(pending_call);
     DBusError error;
     assert(msg);
 
     g_debug("call_callback(%p)", data);
+    dump_args(T, 1, n_args);
 
     dbus_pending_call_unref(pending_call);
-
-    for (i = 1; i <= n_args; i++) {
-        if (lua_type(T, i) == LUA_TSTRING)
-            g_debug("arg %d: %s", i, lua_tostring(T, i));
-        else
-            g_debug("arg %d: type=%s", i, lua_typename(T, lua_type(T, i)));
-    }
 
     if (dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_METHOD_RETURN) {
         g_debug("got reply");
@@ -113,6 +135,7 @@ static int bus_call(lua_State *L)
 
     g_debug("%s: conn=%p dest=%s object_path=%s interface_name=%s method_name=%s sig=%s",
             __FUNCTION__, (void *) conn, dest, object_path, interface_name, method_name, sig);
+    dump_args(L, 2, n_args);
 
     luaL_argcheck(L, g_dbus_is_name(dest), 2, "Invalid bus name");
     luaL_argcheck(L, g_variant_is_object_path(object_path), 3, "Invalid object path");
@@ -153,14 +176,8 @@ static int bus_call(lua_State *L)
     T = lua_newthread(L);
 
     lua_pushlightuserdata(L, conn);
-    for (i = 2; i <= n_args; i++) {
+    for (i = 2; i <= n_args; i++)
         lua_pushvalue(L, i);
-
-        if (lua_type(L, i) == LUA_TSTRING)
-            g_debug("arg %d: %s", i, lua_tostring(L, i));
-        else
-            g_debug("arg %d: type=%s", i, lua_typename(L, lua_type(L, i)));
-    }
     lua_xmove(L, T, n_args);
 
     /* Push thread to registry so we will prevent garbage collection */
@@ -191,7 +208,7 @@ static int interface_method_return(lua_State *L)
 {
     DBusConnection *conn;
     DBusMessage *msg;
-    int i, n_args = lua_gettop(L);
+    int n_args = lua_gettop(L);
     const char *out_sig;
     DBusMessage *reply;
     dbus_bool_t ret;
@@ -210,6 +227,7 @@ static int interface_method_return(lua_State *L)
             dbus_message_get_sender(msg), dbus_message_get_path(msg),
             dbus_message_get_interface(msg), dbus_message_get_member(msg),
             out_sig);
+    dump_args(L, 2, n_args);
 
     /* In case of (nil, error_msg) return DBus error */
     if (lua_isnil(L, 2)) {
@@ -225,13 +243,6 @@ static int interface_method_return(lua_State *L)
     reply = dbus_message_new_method_return(msg);
     assert(reply);
     dbus_message_unref(msg);
-
-    for (i = 2; i <= n_args; i++) {
-        if (lua_type(L, i) == LUA_TSTRING)
-            g_debug("arg %d type=%s value=%s", i, lua_typename(L, lua_type(L, i)), lua_tostring(L, i));
-        else
-            g_debug("arg %d type=%s", i, lua_typename(L, lua_type(L, i)));
-    }
 
     range_to_msg(reply, L, 2, n_args + 1, out_sig);
     ret = dbus_connection_send(conn, reply, NULL);
@@ -251,7 +262,6 @@ static DBusHandlerResult interface_method_call(DBusConnection *connection,
     lua_State *T;
     int n_args;
     int n_params;
-    int i;
 
     g_debug("%s: sender=%s object_path=%s interface_name=%s method_name=%s type=%d",
             __FUNCTION__,
@@ -283,13 +293,7 @@ static DBusHandlerResult interface_method_call(DBusConnection *connection,
         luaL_error(T, "No %s in method lookup", method);
 
     n_args = lua_rawlen(T, 5);
-    for (i = 3; i <= n_args; i++) {
-        lua_rawgeti(T, 5, i);
-        if (lua_type(T, -1) == LUA_TSTRING)
-            g_debug("arg %d: %s", i, lua_tostring(T, -1));
-        else
-            g_debug("arg %d: %s", i, lua_typename(T, lua_type(T, -1)));
-    }
+    unpack_table(T, 5, 3, n_args);
 
     dbus_message_ref(msg);
 
@@ -364,7 +368,6 @@ static DBusHandlerResult signal_callback(DBusConnection *conn,
     const char *signal = dbus_message_get_member(msg);
     int n_args;
     lua_State *L;
-    int i;
 
     g_debug("%s: path=%s interface=%s signal=%s", __FUNCTION__, path, interface, signal);
 
@@ -385,13 +388,7 @@ static DBusHandlerResult signal_callback(DBusConnection *conn,
     }
 
     n_args = lua_rawlen(L, 3);
-    for (i = 1; i <= n_args; i++) {
-        lua_rawgeti(L, 3, i);
-        if (lua_type(L, -1) == LUA_TSTRING)
-            g_debug("arg %d: %s", i, lua_tostring(L, -1));
-        else
-            g_debug("arg %d: %s", i, lua_typename(L, lua_type(L, -1)));
-    }
+    unpack_table(L, 3, 1, n_args);
 
     ed_resume(L, n_args + push_msg(L, msg) - 1);
 
