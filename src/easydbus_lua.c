@@ -219,11 +219,6 @@ LUALIB_API int luaopen_easydbus_core(lua_State *L)
     lua_settop(L, 0);
 
     state = lua_newuserdata(L, sizeof(*state));
-    if (!state) {
-        lua_pushnil(L);
-        lua_pushliteral(L, "Out of memory");
-        return 2;
-    }
     g_debug("Created state: %p", (void *) state);
     state->loop = EV_DEFAULT;
     state->in_mainloop = false;
