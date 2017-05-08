@@ -17,12 +17,6 @@
 static int bus_mt;
 #define BUS_MT ((void *) &bus_mt)
 
-/*
- * Error is shared because we don't want to initialize it every time we call
- * an API.
- */
-DBusError error;
-
 static DBusConnection *get_conn(lua_State *L, int index)
 {
     DBusConnection *conn;
@@ -42,6 +36,7 @@ static void call_callback(DBusPendingCall *pending_call, void *data)
     int i;
     int n_args = lua_gettop(T);
     DBusMessage *msg = dbus_pending_call_steal_reply(pending_call);
+    DBusError error;
     assert(msg);
 
     g_debug("call_callback(%p)", data);
@@ -62,6 +57,7 @@ static void call_callback(DBusPendingCall *pending_call, void *data)
         ed_resume(T, 1 + push_msg(T, msg));
     } else {
         lua_pushnil(T);
+        dbus_error_init(&error);
         dbus_set_error_from_message(&error, msg);
         lua_pushstring(T, error.message);
         dbus_error_free(&error);
