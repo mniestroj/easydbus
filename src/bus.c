@@ -732,7 +732,7 @@ static void watch_remove(DBusWatch *watch, void *data)
     g_debug("%s: %p\n", __FUNCTION__, (void *) io);
 
     ev_io_stop(loop, io);
-    free(io);
+    free(io_wrap);
 }
 
 static void watch_toggle(DBusWatch *watch, void *data)
