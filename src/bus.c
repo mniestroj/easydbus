@@ -89,9 +89,14 @@ static void call_callback(DBusPendingCall *pending_call, void *data)
     dbus_message_unref(msg);
 
     /* Remove thread from registry, so garbage collection can take place */
+    /*
+     * TODO: do not remove thread from itself, do it from main thread
+     */
+#if 0
     lua_pushlightuserdata(T, T);
     lua_pushnil(T);
     lua_rawset(T, LUA_REGISTRYINDEX);
+#endif
 }
 
 static inline gboolean in_mainloop(struct easydbus_state *state)
@@ -309,6 +314,9 @@ static DBusHandlerResult interface_method_call(DBusConnection *connection,
     lua_rawseti(T, -2, 3);
     ed_resume(T, n_args + n_params - 1);
 
+    /*
+     * TODO: Do not remove thread in case of yield
+     */
     lua_pop(state->L, 1);
 
     return DBUS_HANDLER_RESULT_HANDLED;
