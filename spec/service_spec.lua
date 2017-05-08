@@ -270,7 +270,7 @@ describe('Method handlers return values', function()
 end)
 
 describe('Invalid service creation', function()
-   local object
+   local bus, object
 
    before_each(function()
       bus = assert(dbus[bus_name]())
