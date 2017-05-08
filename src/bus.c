@@ -215,6 +215,17 @@ static int interface_method_return(lua_State *L)
             dbus_message_get_interface(msg), dbus_message_get_member(msg),
             out_sig);
 
+    /* In case of (nil, error_msg) return DBus error */
+    if (lua_isnil(L, 2)) {
+        reply = dbus_message_new_error(msg, DBUS_ERROR_FAILED,
+                                       luaL_tolstring(L, 3, NULL));
+        assert(reply);
+        dbus_message_unref(msg);
+        dbus_connection_send(conn, reply, NULL);
+
+        return 0;
+    }
+
     reply = dbus_message_new_method_return(msg);
     assert(reply);
     dbus_message_unref(msg);

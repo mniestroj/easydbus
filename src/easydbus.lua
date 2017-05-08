@@ -11,6 +11,7 @@ local resume = coroutine.resume
 local running = coroutine.running
 local yield = coroutine.yield
 local unpack = unpack or table.unpack
+local t_remove = table.remove
 
 -- wrappers
 local function task(func, ...)
@@ -50,7 +51,16 @@ local function object_method_wrapper(func, ...)
    local arg = args[nargs]
    args[nargs-1] = nil
    args[nargs] = nil
-   cb(arg, func(unpack(args)))
+
+   -- Catch errors and send them as (nil, error_msg)
+   local rets = {pcall(func, unpack(args))}
+   local success = rets[1]
+   if success then
+      t_remove(rets, 1)
+      cb(arg, unpack(rets))
+   else
+      cb(arg, nil, rets[2])
+   end
 end
 function object_mt:add_method(method_name, in_sig, out_sig, func, ...)
    assert(func ~= nil, 'Method handler not specified')
