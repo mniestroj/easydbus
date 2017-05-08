@@ -79,8 +79,7 @@ function object_mt:add_method(method_name, in_sig, out_sig, func, ...)
 end
 
 local function create_object(_, bus, path, interface)
-   local object = {}
-   object = {
+   local object = {
       bus = bus,
       path = path,
       interface = interface,
