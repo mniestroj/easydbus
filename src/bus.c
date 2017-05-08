@@ -253,7 +253,6 @@ static DBusHandlerResult interface_method_call(DBusConnection *connection,
     const char *interface = dbus_message_get_interface(msg);
     const char *method = dbus_message_get_member(msg);
     lua_State *T;
-    int ret;
     int n_args;
     int n_params;
     int i;
@@ -308,14 +307,7 @@ static DBusHandlerResult interface_method_call(DBusConnection *connection,
     lua_rawseti(T, -2, 2);
     lua_rawgeti(T, 5, 2); /* out_sig */
     lua_rawseti(T, -2, 3);
-    ret = ed_resume(T, n_args + n_params - 1);
-
-    if (ret) {
-        if (ret == LUA_YIELD)
-            g_warning("method handler yielded");
-        else
-            g_warning("method handler error: %s", lua_tostring(T, -1));
-    }
+    ed_resume(T, n_args + n_params - 1);
 
     lua_pop(state->L, 1);
 
@@ -376,7 +368,6 @@ static DBusHandlerResult signal_callback(DBusConnection *conn,
     const char *signal = dbus_message_get_member(msg);
     int n_args;
     lua_State *L;
-    int ret;
     int i;
 
     g_debug("%s: path=%s interface=%s signal=%s", __FUNCTION__, path, interface, signal);
@@ -406,9 +397,7 @@ static DBusHandlerResult signal_callback(DBusConnection *conn,
             g_debug("arg %d: %s", i, lua_typename(L, lua_type(L, -1)));
     }
 
-    ret = ed_resume(L, n_args + push_msg(L, msg) - 1);
-    if (ret && ret != LUA_YIELD)
-        g_warning("signal handler error: %s", lua_tostring(L, -1));
+    ed_resume(L, n_args + push_msg(L, msg) - 1);
 
     lua_pop(state->L, 1);
 
