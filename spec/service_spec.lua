@@ -300,3 +300,74 @@ describe('Invalid service creation', function()
       end)
    end)
 end)
+
+describe('Returning DBus errors', function()
+   local bus, object
+   local g_error = error
+   local error = function(msg)
+      return g_error(msg, 0)
+   end
+
+   before_each(function()
+         bus = assert(dbus[bus_name]())
+         assert(bus:own_name(service_name))
+         object = bus:object(object_path, interface_name)
+         object:add_method('Empty', '', '', function() end)
+   end)
+
+   after_each(function()
+         assert(bus:unown_name(service_name))
+   end)
+
+   it('Simple', function()
+      object:add_method('Error1', '', '', function()
+         error('Error1')
+      end)
+
+      local ret
+      dbus.add_callback(function()
+         ret = pack(bus:call(service_name, object_path, interface_name, 'Error1'))
+         dbus.mainloop_quit()
+      end)
+      dbus.mainloop()
+
+      assert.are.same(pack(nil, 'org.freedesktop.DBus.Error.Failed', 'Error1'), ret)
+   end)
+
+   it('Single yield in handler', function()
+      object:add_method('Error2', '', '', function()
+         -- Yield by calling an empty method from ourselves
+         bus:call(service_name, object_path, interface_name, 'Empty')
+         error('Error2')
+      end)
+
+      local ret
+      dbus.add_callback(function()
+         ret = pack(bus:call(service_name, object_path, interface_name, 'Error2'))
+         dbus.mainloop_quit()
+      end)
+      dbus.mainloop();
+
+      assert.are.same(pack(nil, 'org.freedesktop.DBus.Error.Failed', 'Error2'), ret)
+   end)
+
+   it('Multiple yields in handler', function()
+      object:add_method('Error3', '', '', function()
+         -- Yield by calling multiple empty methods from ourselves
+         bus:call(service_name, object_path, interface_name, 'Empty')
+         bus:call(service_name, object_path, interface_name, 'Empty')
+         bus:call(service_name, object_path, interface_name, 'Empty')
+         bus:call(service_name, object_path, interface_name, 'Empty')
+         error('Error3')
+      end)
+
+      local ret
+      dbus.add_callback(function()
+         ret = pack(bus:call(service_name, object_path, interface_name, 'Error3'))
+         dbus.mainloop_quit()
+      end)
+      dbus.mainloop();
+
+      assert.are.same(pack(nil, 'org.freedesktop.DBus.Error.Failed', 'Error3'), ret)
+   end)
+end)
