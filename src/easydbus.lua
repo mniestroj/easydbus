@@ -27,15 +27,10 @@ function dbus.mainloop(...)
    dbus.bus.call = function(...)
       return yield(task(old_call, ...))
    end
-   local old_own_name = dbus.bus.own_name
-   dbus.bus.own_name = function(...)
-      return yield(task(old_own_name, ...))
-   end
 
    local ret = {old_mainloop(...)}
 
    dbus.bus.call = old_call
-   dbus.bus.own_name = old_own_name
 
    return unpack(ret)
 end
