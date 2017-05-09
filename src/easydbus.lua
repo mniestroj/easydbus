@@ -20,6 +20,7 @@ local function task(func, ...)
    args[#args+1] = running()
    func(unpack(args))
 end
+dbus.task = task
 
 local old_mainloop = dbus.mainloop
 function dbus.mainloop(...)
