@@ -90,12 +90,14 @@ static int easydbus_mainloop(lua_State *L)
     struct ev_loop *loop = state->loop;
 
     state->in_mainloop = true;
+    easydbus_enable_ios(loop, state->ios);
 
     g_debug("Entering mainloop");
     ev_run(loop, 0);
     g_debug("Exiting mainloop");
 
     state->in_mainloop = false;
+    easydbus_disable_ios(loop, state->ios);
 
     return 0;
 }
@@ -224,6 +226,9 @@ LUALIB_API int luaopen_easydbus_core(lua_State *L)
     state->in_mainloop = false;
     state->ref_cb = -1;
     state->L = L;
+    state->ios = malloc(sizeof(*state->ios));
+    assert(state->ios);
+    state->ios->next = state->ios->prev = state->ios;
 
     ev_signal_init(&signal, signal_handler, SIGINT);
     ev_signal_start(state->loop, &signal);

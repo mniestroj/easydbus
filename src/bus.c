@@ -666,15 +666,10 @@ static unsigned int flags_ev_to_dbus(int events)
     return flags;
 }
 
-struct ev_io_wrap {
-    struct ev_io io;
-    DBusWatch *watch;
-    DBusConnection *conn;
-};
-
 struct ev_loop_wrap {
     struct ev_loop *loop;
     struct DBusConnection *conn;
+    struct easydbus_state *state;
 };
 
 static void io_cb(struct ev_loop *loop, struct ev_io *io, int revents)
@@ -694,15 +689,56 @@ static void io_cb(struct ev_loop *loop, struct ev_io *io, int revents)
     g_debug("io_cb exit");
 }
 
+static struct ev_io_wrap *ev_io_wrap_add(struct easydbus_state *state)
+{
+    struct ev_io_wrap *last;
+    struct ev_io_wrap *io = malloc(sizeof(*io));
+    assert(io);
+
+    last = state->ios->prev;
+    last->next = io;
+    state->ios->prev = io;
+    io->next = state->ios;
+    io->prev = last;
+
+    return io;
+}
+
+static void ev_io_wrap_remove(struct ev_io_wrap *io)
+{
+    io->next->prev = io->prev;
+    io->prev->next = io->next;
+
+    free(io);
+}
+
+void easydbus_enable_ios(struct ev_loop *loop, struct ev_io_wrap *ios)
+{
+    struct ev_io_wrap *io;
+
+    for (io = ios->next; io != ios; io = io->next) {
+        if (dbus_watch_get_enabled(io->watch))
+            ev_io_start(loop, &io->io);
+    }
+}
+
+void easydbus_disable_ios(struct ev_loop *loop, struct ev_io_wrap *ios)
+{
+    struct ev_io_wrap *io;
+
+    for (io = ios->next; io != ios; io = io->next)
+        ev_io_stop(loop, &io->io);
+}
+
 static dbus_bool_t watch_add(DBusWatch *watch, void *data)
 {
     struct ev_loop_wrap *loop_wrap = data;
     struct ev_loop *loop = loop_wrap->loop;
+    struct easydbus_state *state = loop_wrap->state;
     DBusConnection *conn = loop_wrap->conn;
     unsigned int flags;
-    struct ev_io_wrap *io_wrap = malloc(sizeof(*io_wrap));
+    struct ev_io_wrap *io_wrap = ev_io_wrap_add(state);
     struct ev_io *io;
-    assert(io_wrap);
 
     io = &io_wrap->io;
     io_wrap->watch = watch;
@@ -714,10 +750,10 @@ static dbus_bool_t watch_add(DBusWatch *watch, void *data)
     ev_io_init(io, io_cb, dbus_watch_get_unix_fd(watch),
                flags_dbus_to_ev(flags));
 
-    if (dbus_watch_get_enabled(watch))
-        ev_io_start(loop, io);
-
     dbus_watch_set_data(watch, io_wrap, NULL);
+
+    if (state->in_mainloop && dbus_watch_get_enabled(watch))
+        ev_io_start(loop, io);
 
     return TRUE;
 }
@@ -725,24 +761,30 @@ static dbus_bool_t watch_add(DBusWatch *watch, void *data)
 static void watch_remove(DBusWatch *watch, void *data)
 {
     struct ev_loop_wrap *loop_wrap = data;
+    struct easydbus_state *state = loop_wrap->state;
     struct ev_loop *loop = loop_wrap->loop;
     struct ev_io_wrap *io_wrap = dbus_watch_get_data(watch);
     struct ev_io *io = &io_wrap->io;
 
     g_debug("%s: %p\n", __FUNCTION__, (void *) io);
 
-    ev_io_stop(loop, io);
-    free(io_wrap);
+    if (state->in_mainloop)
+        ev_io_stop(loop, io);
+    ev_io_wrap_remove(io_wrap);
 }
 
 static void watch_toggle(DBusWatch *watch, void *data)
 {
     struct ev_loop_wrap *loop_wrap = data;
+    struct easydbus_state *state = loop_wrap->state;
     struct ev_loop *loop = loop_wrap->loop;
     struct ev_io_wrap *io_wrap = dbus_watch_get_data(watch);
     struct ev_io *io = &io_wrap->io;
 
     g_debug("%s: %p\n", __FUNCTION__, (void *) io);
+
+    if (!state->in_mainloop)
+        return;
 
     if (dbus_watch_get_enabled(watch))
         ev_io_start(loop, io);
@@ -771,6 +813,7 @@ int new_conn(lua_State *L, DBusBusType bus_type)
     assert(loop_wrap);
     loop_wrap->loop = loop;
     loop_wrap->conn = conn;
+    loop_wrap->state = state;
 
     dbus_connection_register_fallback(conn, "/", &interface_vtable, state);
     dbus_connection_add_filter(conn, signal_callback, state, NULL);
