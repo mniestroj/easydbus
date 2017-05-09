@@ -103,11 +103,6 @@ static void call_callback(DBusPendingCall *pending_call, void *data)
 #endif
 }
 
-static inline gboolean in_mainloop(struct easydbus_state *state)
-{
-    return state->in_mainloop;
-}
-
 static void notify_delete(void *data)
 {
     g_debug("notify_delete %p", data);
@@ -154,7 +149,7 @@ static int bus_call(lua_State *L)
                                        method_name);
     assert(msg);
 
-    if (!in_mainloop(state)) {
+    if (L == state->L) {
         DBusMessage *result;
         int ret;
 
