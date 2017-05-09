@@ -20,6 +20,9 @@ static int bus_mt;
 static int watch_mt;
 #define WATCH_MT ((void *) &watch_mt)
 
+static int timeout_mt;
+#define TIMEOUT_MT ((void *) &timeout_mt)
+
 static DBusConnection *get_conn(lua_State *L, int index)
 {
     DBusConnection *conn;
@@ -687,6 +690,18 @@ static void io_cb(struct ev_loop *loop, struct ev_io *io, int revents)
     g_debug("io_cb exit");
 }
 
+static void timer_cb(struct ev_loop *loop, struct ev_timer *timer, int revents)
+{
+    struct ev_timer_wrap *timer_wrap = container_of(timer, struct ev_timer_wrap, timer);
+
+    g_debug("timer_cb %p", (void *) timer_wrap->timeout);
+
+    assert(dbus_timeout_handle(timer_wrap->timeout));
+
+    while (dbus_connection_dispatch(timer_wrap->conn) == DBUS_DISPATCH_DATA_REMAINS)
+        ;
+}
+
 static int watch_fd(lua_State *L)
 {
     struct ev_io_wrap *io = lua_touserdata(L, 1);
@@ -728,6 +743,38 @@ static luaL_Reg watch_funcs[] = {
     {NULL, NULL},
 };
 
+static int timeout_interval(lua_State *L)
+{
+    struct ev_timer_wrap *timer = lua_touserdata(L, 1);
+    lua_pushinteger(L, dbus_timeout_get_interval(timer->timeout));
+    return 1;
+}
+
+static int timeout_enabled(lua_State *L)
+{
+    struct ev_timer_wrap *timer = lua_touserdata(L, 1);
+    lua_pushboolean(L, dbus_timeout_get_enabled(timer->timeout));
+    return 1;
+}
+
+static int timeout_handle(lua_State *L)
+{
+    struct ev_timer_wrap *timer = lua_touserdata(L, 1);
+
+    assert(dbus_timeout_handle(timer->timeout));
+    while (dbus_connection_dispatch(timer->conn) == DBUS_DISPATCH_DATA_REMAINS)
+        ;
+
+    return 0;
+}
+
+static luaL_Reg timeout_funcs[] = {
+    {"interval", timeout_interval},
+    {"enabled", timeout_enabled},
+    {"handle", timeout_handle},
+    {NULL, NULL},
+};
+
 static struct ev_io_wrap *ev_io_wrap_add(struct easydbus_state *state)
 {
     lua_State *L = state->L;
@@ -756,22 +803,68 @@ static void ev_io_wrap_remove(struct easydbus_state *state, struct ev_io_wrap *i
     luaL_unref(state->L, LUA_REGISTRYINDEX, io->ref);
 }
 
-void easydbus_enable_ios(struct ev_loop *loop, struct ev_io_wrap *ios)
+static struct ev_timer_wrap *ev_timer_wrap_add(struct easydbus_state *state)
 {
+    lua_State *L = state->L;
+    struct ev_timer_wrap *last;
+    struct ev_timer_wrap *timer = lua_newuserdata(L, sizeof(*timer));
+
+    last = state->timers->prev;
+    last->next = timer;
+    state->timers->prev = timer;
+    timer->next = state->timers;
+    timer->prev = last;
+
+    lua_pushlightuserdata(L, TIMEOUT_MT);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_setmetatable(L, -2);
+    timer->ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
+    return timer;
+}
+
+static void ev_timer_wrap_remove(struct easydbus_state *state, struct ev_timer_wrap *timer)
+{
+    timer->next->prev = timer->prev;
+    timer->prev->next = timer->next;
+
+    luaL_unref(state->L, LUA_REGISTRYINDEX, timer->ref);
+}
+
+void easydbus_enable_ios(struct ev_loop *loop, struct easydbus_state *state)
+{
+    struct ev_io_wrap *ios = state->ios;
     struct ev_io_wrap *io;
+    struct ev_timer_wrap *timers = state->timers;
+    struct ev_timer_wrap *timer;
+    int interval;
 
     for (io = ios->next; io != ios; io = io->next) {
         if (dbus_watch_get_enabled(io->watch))
             ev_io_start(loop, &io->io);
     }
+
+    for (timer = timers->next; timer != timers; timer = timer->next) {
+        if (dbus_timeout_get_enabled(timer->timeout)) {
+            interval = dbus_timeout_get_interval(timer->timeout);
+            ev_timer_set(&timer->timer, interval * 0.001, interval * 0.001);
+            ev_timer_start(loop, &timer->timer);
+        }
+    }
 }
 
-void easydbus_disable_ios(struct ev_loop *loop, struct ev_io_wrap *ios)
+void easydbus_disable_ios(struct ev_loop *loop, struct easydbus_state *state)
 {
+    struct ev_io_wrap *ios = state->ios;
     struct ev_io_wrap *io;
+    struct ev_timer_wrap *timers = state->timers;
+    struct ev_timer_wrap *timer;
 
     for (io = ios->next; io != ios; io = io->next)
         ev_io_stop(loop, &io->io);
+
+    for (timer = timers->next; timer != timers; timer = timer->next)
+        ev_timer_stop(loop, &timer->timer);
 }
 
 void easydbus_enable_external_watches(lua_State *L, struct easydbus_state *state)
@@ -779,15 +872,23 @@ void easydbus_enable_external_watches(lua_State *L, struct easydbus_state *state
     struct easydbus_external_mainloop *ext = &state->external_mainloop;
     struct ev_io_wrap *ios = state->ios;
     struct ev_io_wrap *io;
+    struct ev_timer_wrap *timers = state->timers;
+    struct ev_timer_wrap *timer;
 
     lua_rawgeti(L, LUA_REGISTRYINDEX, ext->watch_add);
-
     for (io = ios->next; io != ios; io = io->next) {
         lua_pushvalue(L, -1);
         lua_rawgeti(L, LUA_REGISTRYINDEX, io->ref);
         lua_call(L, 1, 0);
     }
+    lua_pop(L, 1);
 
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ext->timeout_add);
+    for (timer = timers->next; timer != timers; timer = timer->next) {
+        lua_pushvalue(L, -1);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, timer->ref);
+        lua_call(L, 1, 0);
+    }
     lua_pop(L, 1);
 }
 
@@ -796,15 +897,23 @@ void easydbus_disable_external_watches(lua_State *L, struct easydbus_state *stat
     struct easydbus_external_mainloop *ext = &state->external_mainloop;
     struct ev_io_wrap *ios = state->ios;
     struct ev_io_wrap *io;
+    struct ev_timer_wrap *timers = state->timers;
+    struct ev_timer_wrap *timer;
 
     lua_rawgeti(L, LUA_REGISTRYINDEX, ext->watch_remove);
-
     for (io = ios->next; io != ios; io = io->next) {
         lua_pushvalue(L, -1);
         lua_rawgeti(L, LUA_REGISTRYINDEX, io->ref);
         lua_call(L, 1, 0);
     }
+    lua_pop(L, 1);
 
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ext->timeout_remove);
+    for (timer = timers->next; timer != timers; timer = timer->next) {
+        lua_pushvalue(L, -1);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, timer->ref);
+        lua_call(L, 1, 0);
+    }
     lua_pop(L, 1);
 }
 
@@ -898,6 +1007,94 @@ static void watch_toggle(DBusWatch *watch, void *data)
         ev_io_stop(loop, io);
 }
 
+static dbus_bool_t timeout_add(DBusTimeout *timeout, void *data)
+{
+    struct ev_loop_wrap *loop_wrap = data;
+    struct easydbus_state *state = loop_wrap->state;
+    struct easydbus_external_mainloop *ext = &state->external_mainloop;
+    DBusConnection *conn = loop_wrap->conn;
+    struct ev_loop *loop = loop_wrap->loop;
+    struct ev_timer_wrap *timer_wrap = ev_timer_wrap_add(state);
+    struct ev_timer *timer;
+    int interval = dbus_timeout_get_interval(timeout);
+
+    timer = &timer_wrap->timer;
+    timer_wrap->timeout = timeout;
+    timer_wrap->conn = conn;
+
+    g_debug("%s: %p %d", __FUNCTION__, (void *) timeout, interval);
+
+    ev_timer_init(timer, timer_cb, interval * 0.001, interval * 0.001);
+
+    dbus_timeout_set_data(timeout, timer_wrap, NULL);
+
+    if (state->in_mainloop && dbus_timeout_get_enabled(timeout))
+        ev_timer_start(loop, timer);
+
+    if (ext->active) {
+        lua_State *L = state->L;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ext->timeout_add);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, timer_wrap->ref);
+        lua_call(L, 1, 0);
+    }
+
+    return TRUE;
+}
+
+static void timeout_remove(DBusTimeout *timeout, void *data)
+{
+    struct ev_loop_wrap *loop_wrap = data;
+    struct easydbus_state *state = loop_wrap->state;
+    struct easydbus_external_mainloop *ext = &state->external_mainloop;
+    struct ev_loop *loop = loop_wrap->loop;
+    struct ev_timer_wrap *timer_wrap = dbus_timeout_get_data(timeout);
+    struct ev_timer *timer = &timer_wrap->timer;
+
+    g_debug("%s: %p\n", __FUNCTION__, (void *) timeout);
+
+    if (state->in_mainloop)
+        ev_timer_stop(loop, timer);
+
+    if (ext->active) {
+        lua_State *L = state->L;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ext->timeout_remove);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, timer_wrap->ref);
+        lua_call(L, 1, 0);
+    }
+
+    ev_timer_wrap_remove(state, timer_wrap);
+}
+
+static void timeout_toggle(DBusTimeout *timeout, void *data)
+{
+    struct ev_loop_wrap *loop_wrap = data;
+    struct easydbus_state *state = loop_wrap->state;
+    struct easydbus_external_mainloop *ext = &state->external_mainloop;
+    struct ev_loop *loop = loop_wrap->loop;
+    struct ev_timer_wrap *timer_wrap = dbus_timeout_get_data(timeout);
+    struct ev_timer *timer = &timer_wrap->timer;
+
+    g_debug("%s: %p\n", __FUNCTION__, (void *) timer);
+
+    if (ext->active) {
+        lua_State *L = state->L;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ext->watch_toggle);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, timer_wrap->ref);
+        lua_call(L, 1, 0);
+    }
+
+    if (!state->in_mainloop)
+        return;
+
+    if (dbus_timeout_get_enabled(timeout))
+        ev_timer_start(loop, timer);
+    else
+        ev_timer_stop(loop, timer);
+}
+
 int new_conn(lua_State *L, DBusBusType bus_type)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
@@ -928,6 +1125,8 @@ int new_conn(lua_State *L, DBusBusType bus_type)
     dbus_connection_set_exit_on_disconnect(conn, FALSE);
     dbus_connection_set_watch_functions(conn, watch_add, watch_remove,
                                         watch_toggle, loop_wrap, free);
+    dbus_connection_set_timeout_functions(conn, timeout_add, timeout_remove,
+                                          timeout_toggle, loop_wrap, NULL);
 
     /* Create table with conn userdata, method and signal handlers */
     lua_createtable(L, 3, 0);
@@ -967,6 +1166,14 @@ int luaopen_easydbus_bus(lua_State *L)
     /* Setup watch mt and push to registry */
     lua_pushlightuserdata(L, WATCH_MT);
     luaL_newlib(L, watch_funcs);
+    lua_pushliteral(L, "__index");
+    lua_pushvalue(L, -2);
+    lua_rawset(L, -3);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    /* Setup timeout mt and push to registry */
+    lua_pushlightuserdata(L, TIMEOUT_MT);
+    luaL_newlib(L, timeout_funcs);
     lua_pushliteral(L, "__index");
     lua_pushvalue(L, -2);
     lua_rawset(L, -3);

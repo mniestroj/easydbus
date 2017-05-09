@@ -93,14 +93,14 @@ static int easydbus_mainloop(lua_State *L)
         luaL_error(L, "Already in mainloop");
 
     state->in_mainloop = true;
-    easydbus_enable_ios(loop, state->ios);
+    easydbus_enable_ios(loop, state);
 
     g_debug("Entering mainloop");
     ev_run(loop, 0);
     g_debug("Exiting mainloop");
 
     state->in_mainloop = false;
-    easydbus_disable_ios(loop, state->ios);
+    easydbus_disable_ios(loop, state);
 
     return 0;
 }
@@ -188,9 +188,9 @@ static int easydbus_set_watch_funcs(lua_State *L)
         luaL_unref(L, LUA_REGISTRYINDEX, ext->watch_add);
         luaL_unref(L, LUA_REGISTRYINDEX, ext->watch_remove);
         luaL_unref(L, LUA_REGISTRYINDEX, ext->watch_toggle);
-        ext->watch_add = -1;
-        ext->watch_remove = -1;
-        ext->watch_toggle = -1;
+        luaL_unref(L, LUA_REGISTRYINDEX, ext->timeout_add);
+        luaL_unref(L, LUA_REGISTRYINDEX, ext->timeout_remove);
+        luaL_unref(L, LUA_REGISTRYINDEX, ext->timeout_toggle);
         ext->active = false;
 
         return 0;
@@ -202,8 +202,14 @@ static int easydbus_set_watch_funcs(lua_State *L)
     luaL_argcheck(L, lua_isfunction(L, 1), 1, "function expected");
     luaL_argcheck(L, lua_isfunction(L, 2), 2, "function expected");
     luaL_argcheck(L, lua_isfunction(L, 3), 3, "function expected");
+    luaL_argcheck(L, lua_isfunction(L, 4), 4, "function expected");
+    luaL_argcheck(L, lua_isfunction(L, 5), 5, "function expected");
+    luaL_argcheck(L, lua_isfunction(L, 6), 6, "function expected");
 
     ext->active = true;
+    ext->timeout_toggle = luaL_ref(L, LUA_REGISTRYINDEX);
+    ext->timeout_remove = luaL_ref(L, LUA_REGISTRYINDEX);
+    ext->timeout_add = luaL_ref(L, LUA_REGISTRYINDEX);
     ext->watch_toggle = luaL_ref(L, LUA_REGISTRYINDEX);
     ext->watch_remove = luaL_ref(L, LUA_REGISTRYINDEX);
     ext->watch_add = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -266,10 +272,10 @@ LUALIB_API int luaopen_easydbus_core(lua_State *L)
     state->ios = malloc(sizeof(*state->ios));
     assert(state->ios);
     state->ios->next = state->ios->prev = state->ios;
+    state->timers = malloc(sizeof(*state->timers));
+    assert(state->timers);
+    state->timers->next = state->timers->prev = state->timers;
     state->external_mainloop.active = false;
-    state->external_mainloop.watch_add = -1;
-    state->external_mainloop.watch_remove = -1;
-    state->external_mainloop.watch_toggle = -1;
 
     ev_signal_init(&signal, signal_handler, SIGINT);
     ev_signal_start(state->loop, &signal);
