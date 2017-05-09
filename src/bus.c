@@ -774,11 +774,46 @@ void easydbus_disable_ios(struct ev_loop *loop, struct ev_io_wrap *ios)
         ev_io_stop(loop, &io->io);
 }
 
+void easydbus_enable_external_watches(lua_State *L, struct easydbus_state *state)
+{
+    struct easydbus_external_mainloop *ext = &state->external_mainloop;
+    struct ev_io_wrap *ios = state->ios;
+    struct ev_io_wrap *io;
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ext->watch_add);
+
+    for (io = ios->next; io != ios; io = io->next) {
+        lua_pushvalue(L, -1);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, io->ref);
+        lua_call(L, 1, 0);
+    }
+
+    lua_pop(L, 1);
+}
+
+void easydbus_disable_external_watches(lua_State *L, struct easydbus_state *state)
+{
+    struct easydbus_external_mainloop *ext = &state->external_mainloop;
+    struct ev_io_wrap *ios = state->ios;
+    struct ev_io_wrap *io;
+
+    lua_rawgeti(L, LUA_REGISTRYINDEX, ext->watch_remove);
+
+    for (io = ios->next; io != ios; io = io->next) {
+        lua_pushvalue(L, -1);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, io->ref);
+        lua_call(L, 1, 0);
+    }
+
+    lua_pop(L, 1);
+}
+
 static dbus_bool_t watch_add(DBusWatch *watch, void *data)
 {
     struct ev_loop_wrap *loop_wrap = data;
     struct ev_loop *loop = loop_wrap->loop;
     struct easydbus_state *state = loop_wrap->state;
+    struct easydbus_external_mainloop *ext = &state->external_mainloop;
     DBusConnection *conn = loop_wrap->conn;
     unsigned int flags;
     struct ev_io_wrap *io_wrap = ev_io_wrap_add(state);
@@ -799,6 +834,14 @@ static dbus_bool_t watch_add(DBusWatch *watch, void *data)
     if (state->in_mainloop && dbus_watch_get_enabled(watch))
         ev_io_start(loop, io);
 
+    if (ext->active) {
+        lua_State *L = state->L;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ext->watch_add);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, io_wrap->ref);
+        lua_call(L, 1, 0);
+    }
+
     return TRUE;
 }
 
@@ -806,6 +849,7 @@ static void watch_remove(DBusWatch *watch, void *data)
 {
     struct ev_loop_wrap *loop_wrap = data;
     struct easydbus_state *state = loop_wrap->state;
+    struct easydbus_external_mainloop *ext = &state->external_mainloop;
     struct ev_loop *loop = loop_wrap->loop;
     struct ev_io_wrap *io_wrap = dbus_watch_get_data(watch);
     struct ev_io *io = &io_wrap->io;
@@ -814,6 +858,15 @@ static void watch_remove(DBusWatch *watch, void *data)
 
     if (state->in_mainloop)
         ev_io_stop(loop, io);
+
+    if (ext->active) {
+        lua_State *L = state->L;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ext->watch_remove);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, io_wrap->ref);
+        lua_call(L, 1, 0);
+    }
+
     ev_io_wrap_remove(state, io_wrap);
 }
 
@@ -821,11 +874,20 @@ static void watch_toggle(DBusWatch *watch, void *data)
 {
     struct ev_loop_wrap *loop_wrap = data;
     struct easydbus_state *state = loop_wrap->state;
+    struct easydbus_external_mainloop *ext = &state->external_mainloop;
     struct ev_loop *loop = loop_wrap->loop;
     struct ev_io_wrap *io_wrap = dbus_watch_get_data(watch);
     struct ev_io *io = &io_wrap->io;
 
     g_debug("%s: %p\n", __FUNCTION__, (void *) io);
+
+    if (ext->active) {
+        lua_State *L = state->L;
+
+        lua_rawgeti(L, LUA_REGISTRYINDEX, ext->watch_toggle);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, io_wrap->ref);
+        lua_call(L, 1, 0);
+    }
 
     if (!state->in_mainloop)
         return;

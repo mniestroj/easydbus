@@ -30,14 +30,23 @@ struct ev_io_wrap {
     struct ev_io_wrap *next;
 };
 
+struct easydbus_external_mainloop {
+    bool active;
+    int watch_add;
+    int watch_remove;
+    int watch_toggle;
+};
+
 struct easydbus_state {
     struct ev_loop *loop;
     struct ev_io_wrap *ios;
     bool in_mainloop;
-    int ref_cb;
     lua_State *L;
+    struct easydbus_external_mainloop external_mainloop;
 };
 
 int easydbus_is_dbus_type(lua_State *L, int index);
 void easydbus_enable_ios(struct ev_loop *loop, struct ev_io_wrap *ios);
 void easydbus_disable_ios(struct ev_loop *loop, struct ev_io_wrap *ios);
+void easydbus_enable_external_watches(lua_State *L, struct easydbus_state *state);
+void easydbus_disable_external_watches(lua_State *L, struct easydbus_state *state);

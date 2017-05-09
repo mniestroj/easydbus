@@ -89,6 +89,9 @@ static int easydbus_mainloop(lua_State *L)
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     struct ev_loop *loop = state->loop;
 
+    if (state->in_mainloop || state->external_mainloop.active)
+        luaL_error(L, "Already in mainloop");
+
     state->in_mainloop = true;
     easydbus_enable_ios(loop, state->ios);
 
@@ -176,6 +179,40 @@ static int easydbus_add_callback(lua_State *L)
     return 0;
 }
 
+static int easydbus_set_watch_funcs(lua_State *L)
+{
+    struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
+    struct easydbus_external_mainloop *ext = &state->external_mainloop;
+
+    if (lua_gettop(L) < 1 && ext->active) {
+        luaL_unref(L, LUA_REGISTRYINDEX, ext->watch_add);
+        luaL_unref(L, LUA_REGISTRYINDEX, ext->watch_remove);
+        luaL_unref(L, LUA_REGISTRYINDEX, ext->watch_toggle);
+        ext->watch_add = -1;
+        ext->watch_remove = -1;
+        ext->watch_toggle = -1;
+        ext->active = false;
+
+        return 0;
+    }
+
+    if (state->in_mainloop || ext->active)
+        luaL_error(L, "Already in mainloop");
+
+    luaL_argcheck(L, lua_isfunction(L, 1), 1, "function expected");
+    luaL_argcheck(L, lua_isfunction(L, 2), 2, "function expected");
+    luaL_argcheck(L, lua_isfunction(L, 3), 3, "function expected");
+
+    ext->active = true;
+    ext->watch_toggle = luaL_ref(L, LUA_REGISTRYINDEX);
+    ext->watch_remove = luaL_ref(L, LUA_REGISTRYINDEX);
+    ext->watch_add = luaL_ref(L, LUA_REGISTRYINDEX);
+
+    easydbus_enable_external_watches(L, state);
+
+    return 0;
+}
+
 static int easydbus_pack(lua_State *L)
 {
     int i;
@@ -195,6 +232,7 @@ static luaL_Reg funcs[] = {
     {"mainloop", easydbus_mainloop},
     {"mainloop_quit", easydbus_mainloop_quit},
     {"add_callback", easydbus_add_callback}, /* only for internal mainloop */
+    {"set_watch_funcs", easydbus_set_watch_funcs},
     {"pack", easydbus_pack},
     {NULL, NULL},
 };
@@ -224,11 +262,14 @@ LUALIB_API int luaopen_easydbus_core(lua_State *L)
     g_debug("Created state: %p", (void *) state);
     state->loop = EV_DEFAULT;
     state->in_mainloop = false;
-    state->ref_cb = -1;
     state->L = L;
     state->ios = malloc(sizeof(*state->ios));
     assert(state->ios);
     state->ios->next = state->ios->prev = state->ios;
+    state->external_mainloop.active = false;
+    state->external_mainloop.watch_add = -1;
+    state->external_mainloop.watch_remove = -1;
+    state->external_mainloop.watch_toggle = -1;
 
     ev_signal_init(&signal, signal_handler, SIGINT);
     ev_signal_start(state->loop, &signal);
@@ -274,6 +315,9 @@ LUALIB_API int luaopen_easydbus_core(lua_State *L)
     push_const_int(DBUS_RELEASE_NAME_REPLY_RELEASED);
     push_const_int(DBUS_RELEASE_NAME_REPLY_NON_EXISTENT);
     push_const_int(DBUS_RELEASE_NAME_REPLY_NOT_OWNER);
+
+    push_const_int(DBUS_WATCH_READABLE);
+    push_const_int(DBUS_WATCH_WRITABLE);
 
     return 1;
 }
