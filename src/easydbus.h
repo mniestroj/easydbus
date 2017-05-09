@@ -24,6 +24,7 @@ struct ev_io_wrap {
     struct ev_io io;
     DBusWatch *watch;
     DBusConnection *conn;
+    int ref;
 
     struct ev_io_wrap *prev;
     struct ev_io_wrap *next;

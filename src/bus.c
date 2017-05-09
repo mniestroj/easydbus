@@ -17,6 +17,9 @@
 static int bus_mt;
 #define BUS_MT ((void *) &bus_mt)
 
+static int watch_mt;
+#define WATCH_MT ((void *) &watch_mt)
+
 static DBusConnection *get_conn(lua_State *L, int index)
 {
     DBusConnection *conn;
@@ -689,11 +692,52 @@ static void io_cb(struct ev_loop *loop, struct ev_io *io, int revents)
     g_debug("io_cb exit");
 }
 
+static int watch_fd(lua_State *L)
+{
+    struct ev_io_wrap *io = lua_touserdata(L, 1);
+    lua_pushinteger(L, dbus_watch_get_unix_fd(io->watch));
+    return 1;
+}
+
+static int watch_flags(lua_State *L)
+{
+    struct ev_io_wrap *io = lua_touserdata(L, 1);
+    lua_pushinteger(L, dbus_watch_get_flags(io->watch));
+    return 1;
+}
+
+static int watch_enabled(lua_State *L)
+{
+    struct ev_io_wrap *io = lua_touserdata(L, 1);
+    lua_pushboolean(L, dbus_watch_get_enabled(io->watch));
+    return 1;
+}
+
+static int watch_handle(lua_State *L)
+{
+    struct ev_io_wrap *io = lua_touserdata(L, 1);
+    unsigned int flags = luaL_checkinteger(L, 2);
+
+    assert(dbus_watch_handle(io->watch, flags));
+    while (dbus_connection_dispatch(io->conn) == DBUS_DISPATCH_DATA_REMAINS)
+        ;
+
+    return 0;
+}
+
+static luaL_Reg watch_funcs[] = {
+    {"fd", watch_fd},
+    {"flags", watch_flags},
+    {"enabled", watch_enabled},
+    {"handle", watch_handle},
+    {NULL, NULL},
+};
+
 static struct ev_io_wrap *ev_io_wrap_add(struct easydbus_state *state)
 {
+    lua_State *L = state->L;
     struct ev_io_wrap *last;
-    struct ev_io_wrap *io = malloc(sizeof(*io));
-    assert(io);
+    struct ev_io_wrap *io = lua_newuserdata(L, sizeof(*io));
 
     last = state->ios->prev;
     last->next = io;
@@ -701,15 +745,20 @@ static struct ev_io_wrap *ev_io_wrap_add(struct easydbus_state *state)
     io->next = state->ios;
     io->prev = last;
 
+    lua_pushlightuserdata(L, WATCH_MT);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_setmetatable(L, -2);
+    io->ref = luaL_ref(L, LUA_REGISTRYINDEX);
+
     return io;
 }
 
-static void ev_io_wrap_remove(struct ev_io_wrap *io)
+static void ev_io_wrap_remove(struct easydbus_state *state, struct ev_io_wrap *io)
 {
     io->next->prev = io->prev;
     io->prev->next = io->next;
 
-    free(io);
+    luaL_unref(state->L, LUA_REGISTRYINDEX, io->ref);
 }
 
 void easydbus_enable_ios(struct ev_loop *loop, struct ev_io_wrap *ios)
@@ -770,7 +819,7 @@ static void watch_remove(DBusWatch *watch, void *data)
 
     if (state->in_mainloop)
         ev_io_stop(loop, io);
-    ev_io_wrap_remove(io_wrap);
+    ev_io_wrap_remove(state, io_wrap);
 }
 
 static void watch_toggle(DBusWatch *watch, void *data)
@@ -858,6 +907,14 @@ int new_conn(lua_State *L, DBusBusType bus_type)
 
 int luaopen_easydbus_bus(lua_State *L)
 {
+    /* Setup watch mt and push to registry */
+    lua_pushlightuserdata(L, WATCH_MT);
+    luaL_newlib(L, watch_funcs);
+    lua_pushliteral(L, "__index");
+    lua_pushvalue(L, -2);
+    lua_rawset(L, -3);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
     /* Set bus mt */
     luaL_newlibtable(L, bus_funcs);
     lua_pushvalue(L, 1);
