@@ -17,6 +17,12 @@ local loop = ev.Loop.default
 
 loop_ev.wrap(loop)
 
+local function loop_start()
+   loop:loop()
+end
+local function loop_stop()
+   loop:unloop()
+end
 local function add_callback(f)
    local coro = coroutine.create(f)
    local idle
@@ -55,9 +61,9 @@ describe('Service creation', function()
       local ret
       add_callback(function()
          ret = pack(bus:call(service_name, object_path, interface_name, 'dummy'))
-         loop:unloop()
+         loop_stop()
       end)
-      loop:loop()
+      loop_start()
 
       assert(bus:unown_name(service_name))
 
@@ -92,9 +98,9 @@ describe('Returning DBus errors', function()
       local ret
       add_callback(function()
          ret = pack(bus:call(service_name, object_path, interface_name, 'Error1'))
-         loop:unloop()
+         loop_stop()
       end)
-      loop:loop()
+      loop_start()
 
       assert.are.same(pack(nil, 'org.freedesktop.DBus.Error.Failed', 'Error1'), ret)
    end)
@@ -109,9 +115,9 @@ describe('Returning DBus errors', function()
       local ret
       add_callback(function()
          ret = pack(bus:call(service_name, object_path, interface_name, 'Error2'))
-         loop:unloop()
+         loop_stop()
       end)
-      loop:loop();
+      loop_start();
 
       assert.are.same(pack(nil, 'org.freedesktop.DBus.Error.Failed', 'Error2'), ret)
    end)
@@ -129,9 +135,9 @@ describe('Returning DBus errors', function()
       local ret
       add_callback(function()
          ret = pack(bus:call(service_name, object_path, interface_name, 'Error3'))
-         loop:unloop()
+         loop_stop()
       end)
-      loop:loop();
+      loop_start();
 
       assert.are.same(pack(nil, 'org.freedesktop.DBus.Error.Failed', 'Error3'), ret)
    end)

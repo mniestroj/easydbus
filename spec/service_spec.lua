@@ -11,6 +11,10 @@ local service_name = 'spec.easydbus'
 local object_path = '/spec/easydbus'
 local interface_name = 'spec.easydbus'
 
+local loop_start = dbus.mainloop
+local loop_stop = dbus.mainloop_quit
+local add_callback = dbus.add_callback
+
 describe('Get ' .. bus_name .. ' bus', function()
    local bus = assert(dbus[bus_name]())
 end)
@@ -24,12 +28,12 @@ describe('Service creation', function()
 
    it('Own and unown name in mainloop', function()
       local bus = assert(dbus[bus_name]())
-      dbus.add_callback(function()
+      add_callback(function()
          assert(bus:own_name(service_name))
          assert(bus:unown_name(service_name))
-         dbus.mainloop_quit()
+         loop_stop()
       end)
-      dbus.mainloop()
+      loop_start()
    end)
 
    it('Register and unregister object with dummy method', function()
@@ -51,11 +55,11 @@ describe('Service creation', function()
       object:add_method('dummy', '', '', dummy_handler)
 
       local ret
-      dbus.add_callback(function()
+      add_callback(function()
          ret = pack(bus:call(service_name, object_path, interface_name, 'dummy'))
-         dbus.mainloop_quit()
+         loop_stop()
       end)
-      dbus.mainloop()
+      loop_start()
 
       assert(bus:unown_name(service_name))
 
@@ -83,11 +87,11 @@ describe('Method handlers return values', function()
       object:add_method(method_name, '', sig, method_handler)
 
       local ret
-      dbus.add_callback(function()
+      add_callback(function()
          ret = pack(bus:call(service_name, object_path, interface_name, method_name))
-         dbus.mainloop_quit()
+         loop_stop()
       end)
-      dbus.mainloop()
+      loop_start()
 
       assert.spy(method_handler).was_called()
       assert.are.same(pack(value), ret)
@@ -335,11 +339,11 @@ describe('Returning DBus errors', function()
       end)
 
       local ret
-      dbus.add_callback(function()
+      add_callback(function()
          ret = pack(bus:call(service_name, object_path, interface_name, 'Error1'))
-         dbus.mainloop_quit()
+         loop_stop()
       end)
-      dbus.mainloop()
+      loop_start()
 
       assert.are.same(pack(nil, 'org.freedesktop.DBus.Error.Failed', 'Error1'), ret)
    end)
@@ -352,11 +356,11 @@ describe('Returning DBus errors', function()
       end)
 
       local ret
-      dbus.add_callback(function()
+      add_callback(function()
          ret = pack(bus:call(service_name, object_path, interface_name, 'Error2'))
-         dbus.mainloop_quit()
+         loop_stop()
       end)
-      dbus.mainloop();
+      loop_start();
 
       assert.are.same(pack(nil, 'org.freedesktop.DBus.Error.Failed', 'Error2'), ret)
    end)
@@ -372,11 +376,11 @@ describe('Returning DBus errors', function()
       end)
 
       local ret
-      dbus.add_callback(function()
+      add_callback(function()
          ret = pack(bus:call(service_name, object_path, interface_name, 'Error3'))
-         dbus.mainloop_quit()
+         loop_stop()
       end)
-      dbus.mainloop();
+      loop_start();
 
       assert.are.same(pack(nil, 'org.freedesktop.DBus.Error.Failed', 'Error3'), ret)
    end)
