@@ -16,6 +16,12 @@ local function watch_handler(watch)
    end
 end
 
+local function timeout_handler(timeout)
+   return function(loop, timeout)
+      timeout:handle()
+   end
+end
+
 local ios = {}
 
 local function watch_add(loop, watch)
@@ -42,6 +48,31 @@ local function watch_toggle(loop, watch)
    end
 end
 
+local timers = {}
+
+local function timeout_add(loop, timeout)
+   local interval, enabled = timeout:interval() * 0.001, timeout:enabled()
+   local timer = ev.Timer.new(timeout_handler(timeout), interval, interval)
+   timers[timeout] = timer
+   if enabled then
+      timer:start(loop)
+   end
+end
+
+local function timeout_remove(loop, timeout)
+   timers[timeout]:stop(loop)
+   timers[timeout] = nil
+end
+
+local function timeout_toggle(loop, timeout)
+   local interval, enabled = timeout:interval() * 0.001, timeout:enabled()
+   if enabled then
+      timers[timeout]:again(loop, timeout)
+   else
+      timers[timeout]:stop(loop)
+   end
+end
+
 local function bind(func, ...)
    local args = {...}
    return function(...)
@@ -56,7 +87,10 @@ local function set_watch_funcs(loop)
 
    dbus.set_watch_funcs(bind(watch_add, loop),
                         bind(watch_remove, loop),
-                        bind(watch_toggle, loop))
+                        bind(watch_toggle, loop),
+                        bind(timeout_add, loop),
+                        bind(timeout_remove, loop),
+                        bind(timeout_toggle, loop))
 end
 
 local function wrap(loop)
