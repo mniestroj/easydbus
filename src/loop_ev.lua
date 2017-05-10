@@ -51,7 +51,7 @@ end
 local timers = {}
 
 local function timeout_add(loop, timeout)
-   local interval, enabled = timeout:interval() * 0.001, timeout:enabled()
+   local interval, enabled = timeout:interval(), timeout:enabled()
    local timer = ev.Timer.new(timeout_handler(timeout), interval, interval)
    timers[timeout] = timer
    if enabled then
@@ -65,7 +65,7 @@ local function timeout_remove(loop, timeout)
 end
 
 local function timeout_toggle(loop, timeout)
-   local interval, enabled = timeout:interval() * 0.001, timeout:enabled()
+   local interval, enabled = timeout:interval(), timeout:enabled()
    if enabled then
       timers[timeout]:again(loop, timeout)
    else

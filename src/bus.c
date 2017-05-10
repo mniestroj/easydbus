@@ -12,6 +12,7 @@
 #include "utils.h"
 
 #include <assert.h>
+#include <math.h>
 #include <stdlib.h>
 
 static int bus_mt;
@@ -160,7 +161,7 @@ static int bus_call(lua_State *L)
         lua_pushliteral(L, "timeout");
         lua_rawget(L, 6);
         if (lua_isnumber(L, -1))
-            timeout = lua_tointeger(L, -1);
+            timeout = round(lua_tonumber(L, -1) * 1000);
         lua_pop(L, 2);
         break;
     default:
@@ -765,7 +766,7 @@ static luaL_Reg watch_funcs[] = {
 static int timeout_interval(lua_State *L)
 {
     struct ev_timer_wrap *timer = lua_touserdata(L, 1);
-    lua_pushinteger(L, dbus_timeout_get_interval(timer->timeout));
+    lua_pushnumber(L, dbus_timeout_get_interval(timer->timeout) * 0.001);
     return 1;
 }
 
