@@ -131,7 +131,9 @@ static int bus_call(lua_State *L)
     const char *object_path = luaL_checkstring(L, 3);
     const char *interface_name = luaL_checkstring(L, 4);
     const char *method_name = luaL_checkstring(L, 5);
-    const char *sig = lua_tostring(L, 6);
+    const char *sig = NULL;
+    int timeout = DBUS_TIMEOUT_USE_DEFAULT;
+    int opt_type = lua_type(L, 6);
     lua_State *T;
     int i, n_args = lua_gettop(L);
     int n_params = n_args - 6;
@@ -148,6 +150,23 @@ static int bus_call(lua_State *L)
     luaL_argcheck(L, g_variant_is_object_path(object_path), 3, "Invalid object path");
     luaL_argcheck(L, g_dbus_is_interface_name(interface_name), 4, "Invalid interface name");
 
+    switch (opt_type) {
+    case LUA_TSTRING:
+        sig = lua_tostring(L, 6);
+        break;
+    case LUA_TTABLE:
+        lua_rawgeti(L, 6, 1);
+        sig = lua_tostring(L, -1);
+        lua_pushliteral(L, "timeout");
+        lua_rawget(L, 6);
+        if (lua_isnumber(L, -1))
+            timeout = lua_tointeger(L, -1);
+        lua_pop(L, 2);
+        break;
+    default:
+        break;
+    }
+
     msg = dbus_message_new_method_call(dest, object_path, interface_name,
                                        method_name);
     assert(msg);
@@ -160,7 +179,7 @@ static int bus_call(lua_State *L)
             range_to_msg(msg, L, 7, 7 + n_params, sig);
 
         dbus_error_init(&error);
-        result = dbus_connection_send_with_reply_and_block(conn, msg, -1, &error);
+        result = dbus_connection_send_with_reply_and_block(conn, msg, timeout, &error);
 
         if (!result) {
             lua_pushnil(L);
@@ -197,7 +216,7 @@ static int bus_call(lua_State *L)
     if (n_params > 0)
         range_to_msg(msg, L, 7, 7 + n_params, sig);
 
-    ret = dbus_connection_send_with_reply(conn, msg, &pending_call, -1);
+    ret = dbus_connection_send_with_reply(conn, msg, &pending_call, timeout);
     assert(ret);
 
     g_debug("set_notify");
