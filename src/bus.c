@@ -307,7 +307,7 @@ static DBusHandlerResult interface_method_call(DBusConnection *connection,
     lua_pushstring(T, path);
     lua_rawget(T, -2);
     if (!lua_istable(T, -1))
-        luaL_error(T, "No % in path lookup", path);
+        luaL_error(T, "No %s in path lookup", path);
 
     lua_pushstring(T, interface);
     lua_rawget(T, -2);
