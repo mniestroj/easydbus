@@ -240,7 +240,7 @@ end
 
 function dbus.assert(...)
    local value, name, message = ...
-   if value then
+   if value or #{...} == 0 then
       return ...
    else
       error(tostring(name) .. ': ' .. tostring(message), 2)
