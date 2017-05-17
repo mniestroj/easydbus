@@ -566,70 +566,6 @@ static void introspect_handler(DBusConnection *conn,
     dbus_connection_send(conn, reply, NULL);
 }
 
-static void properties_handler(DBusConnection *conn,
-                               DBusMessage *msg,
-                               const char *path,
-                               const char *method,
-                               struct easydbus_state *state)
-{
-    DBusMessage *reply;
-    DBusMessageIter msg_iter;
-    DBusMessageIter reply_iter;
-    const char *interface;
-    const char *prop_name;
-    enum {
-        M_GET,
-        M_SET,
-        M_GETALL,
-    } method_type;
-
-    if (!strcmp(method, "Get"))
-        method_type = M_GET;
-    else if (!strcmp(method, "Set"))
-        method_type = M_SET;
-    else if (!strcmp(method, "GetAll"))
-        method_type = M_GETALL;
-    else
-        g_error("Unknown property method name");
-
-    dbus_message_iter_init(msg, &msg_iter);
-
-    assert(dbus_message_iter_get_arg_type(&msg_iter) == DBUS_TYPE_STRING);
-    dbus_message_iter_get_basic(&msg_iter, &interface);
-    dbus_message_iter_next(&msg_iter);
-
-    switch (method_type) {
-    case M_GET: {
-        DBusMessageIter variant_iter;
-        dbus_int32_t val = 12;
-
-        assert(dbus_message_iter_get_arg_type(&msg_iter) == DBUS_TYPE_STRING);
-        dbus_message_iter_get_basic(&msg_iter, &prop_name);
-
-        /* For now return some dummy value */
-        reply = dbus_message_new_method_return(msg);
-        dbus_message_iter_init_append(reply, &reply_iter);
-        dbus_message_iter_open_container(&reply_iter, DBUS_TYPE_VARIANT, DBUS_TYPE_INT32_AS_STRING, &variant_iter);
-        dbus_message_iter_append_basic(&variant_iter, DBUS_TYPE_INT32, &val);
-        dbus_message_iter_close_container(&reply_iter, &variant_iter);
-
-        dbus_connection_send(conn, reply, NULL);
-
-        break;
-    }
-    case M_SET: {
-        g_error("Property Set method is not handled yet");
-
-        break;
-    }
-    case M_GETALL: {
-        g_error("Property GetAll method is not handled yet");
-
-        break;
-    }
-    }
-}
-
 static DBusHandlerResult standard_methods_callback(DBusConnection *conn,
                                                    DBusMessage *msg,
                                                    void *data)
@@ -649,9 +585,6 @@ static DBusHandlerResult standard_methods_callback(DBusConnection *conn,
             introspect_handler(conn, msg, path, state);
             return DBUS_HANDLER_RESULT_HANDLED;
         }
-    } else if (!strcmp(interface, DBUS_INTERFACE_PROPERTIES)) {
-        properties_handler(conn, msg, path, method, state);
-        return DBUS_HANDLER_RESULT_HANDLED;
     }
 
     return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
