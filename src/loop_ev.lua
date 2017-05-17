@@ -7,6 +7,8 @@ local running = coroutine.running
 local yield = coroutine.yield
 local task = dbus.task
 
+local unpack = unpack or table.unpack
+
 assert(ev.READ == dbus.DBUS_WATCH_READABLE)
 assert(ev.WRITE == dbus.DBUS_WATCH_WRITABLE)
 
