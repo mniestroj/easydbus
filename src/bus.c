@@ -489,6 +489,7 @@ static void introspect_handler(DBusConnection *conn,
     lua_State *L = state->L;
     int top = lua_gettop(L);
     size_t path_len = strlen(path);
+    const char *interface;
     struct sb b;
 
     reply = dbus_message_new_method_return(msg);
@@ -507,9 +508,15 @@ static void introspect_handler(DBusConnection *conn,
     lua_rawget(L, -2);
 
     if (lua_istable(L, -1)) {
+        /* Push interfaces */
         lua_pushnil(L);
         while (lua_next(L, -2)) {
-            const char *interface = lua_tostring(L, -2);
+            if (lua_type(L, -2) != LUA_TSTRING) {
+                lua_pop(L, 1);
+                continue;
+            }
+
+            interface = lua_tostring(L, -2);
 
             printf("%s: adding interface name %s\n", __FUNCTION__, interface);
 
@@ -554,27 +561,19 @@ static void introspect_handler(DBusConnection *conn,
 
             lua_pop(L, 1);
         }
-    }
-    lua_pop(L, 1);
 
-    lua_pushnil(L);
-    while (lua_next(L, top + 2)) {
-        const char *key = lua_tostring(L, -2);
-
-        printf("%s: Found path %s\n", __FUNCTION__, key);
-
-        if (!strncmp(path, key, path_len)) {
-            size_t key_len = strlen(key);
-
-            if (key_len > path_len && !strchr(key + path_len, '/')) {
-                /* This is a direct subnode */
-                printf("%s: Found direct subnode\n", __FUNCTION__);
-                sb_addstring(&b, key + path_len);
-            }
+        /* Push subnodes */
+        lua_rawgeti(L, -1, 1);
+        lua_pushnil(L);
+        while(lua_next(L, -2)) {
+            sb_addstring(&b, "  <node name=\"");
+            sb_addstring(&b, lua_tostring(L, -2));
+            sb_addstring(&b, "\"/>\n");
+            lua_pop(L, 1);
         }
-
         lua_pop(L, 1);
     }
+    lua_pop(L, 1);
 
     lua_settop(L, top);
 

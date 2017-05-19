@@ -58,12 +58,33 @@ local function object_method_wrapper(func, ...)
       cb(arg, nil, rets[2])
    end
 end
+local function check_subpath(handlers, path)
+   local subpath, child = path:match('^([%w/]*)/(%w+)$')
+   if not subpath then
+      return
+   end
+   if #subpath == 0 then
+      subpath = '/'
+   end
+
+   if not handlers[subpath] then
+      handlers[subpath] = {{}}
+   end
+   if handlers[subpath][1][child] then
+      return
+   end
+   handlers[subpath][1][child] = true --handlers[path]
+   check_subpath(handlers, subpath)
+end
 function object_mt:add_method(method_name, in_sig, out_sig, func, ...)
+   assert(type(method_name) == 'string', 'method name is not a string')
+   assert(type(in_sig) == 'string', 'in_sig is not a string')
+   assert(type(out_sig) == 'string', 'out_sig is not a string')
    assert(func ~= nil, 'Method handler not specified')
    local handlers = self.bus.handlers
    local path = handlers[self.path]
    if not path then
-      path = {}
+      path = {{}}
       handlers[self.path] = path
    end
    local interface = path[self.interface]
@@ -72,6 +93,7 @@ function object_mt:add_method(method_name, in_sig, out_sig, func, ...)
       path[self.interface] = interface
    end
    interface[method_name] = {in_sig, out_sig, object_method_wrapper, func, ...}
+   check_subpath(handlers, self.path)
 end
 
 local function create_object(_, bus, path, interface)
