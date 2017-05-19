@@ -165,7 +165,7 @@ function dbus.bus:request_name(name, flags)
 end
 
 function dbus.bus:release_name(name)
-   return self:call('org.freedesktop.DBus', '/', 'org.freedesktop.DBus', 'ReleaseName', 'su', name)
+   return self:call('org.freedesktop.DBus', '/', 'org.freedesktop.DBus', 'ReleaseName', 's', name)
 end
 
 function dbus.bus:own_name(name)
