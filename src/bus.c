@@ -540,7 +540,7 @@ static void introspect_handler(DBusConnection *conn,
                 out_sig = lua_tostring(L, -1);
                 if (out_sig && out_sig[0] != '\0') {
                     sb_addstring(&b, "      <arg type=\"");
-                    sb_addstring(&b, in_sig);
+                    sb_addstring(&b, out_sig);
                     sb_addstring(&b, "\" direction=\"out\"/>\n");
                 }
                 lua_pop(L, 1);
