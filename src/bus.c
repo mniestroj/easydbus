@@ -567,6 +567,21 @@ static void introspect_handler(DBusConnection *conn,
         lua_pop(L, 1);
     }
 
+    /* Push standard interfaces */
+    sb_addstring(&b,
+                 "  <interface name=\"" DBUS_INTERFACE_INTROSPECTABLE "\">\n"
+                 "    <method name=\"Introspect\">\n"
+                 "      <arg name=\"xml_data\" type=\"s\" direction=\"out\"/>\n"
+                 "    </method>\n"
+                 "  </interface>\n"
+                 "  <interface name=\"" DBUS_INTERFACE_PEER "\">\n"
+                 "    <method name=\"Ping\"/>\n"
+                 "    <method name=\"GetMachineId\">\n"
+                 "      <arg name=\"machine_uuid\" type=\"s\" direction=\"out\"/>\n"
+                 "    </method>\n"
+                 "  </interface>\n"
+        );
+
     /* Push subnodes */
     lua_rawgeti(L, -1, 1);
     lua_pushnil(L);
