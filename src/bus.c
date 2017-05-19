@@ -488,9 +488,24 @@ static void introspect_handler(DBusConnection *conn,
     DBusMessageIter msg_iter;
     lua_State *L = state->L;
     int top = lua_gettop(L);
-    size_t path_len = strlen(path);
     const char *interface;
     struct sb b;
+
+    lua_pushlightuserdata(L, conn);
+    lua_rawget(L, LUA_REGISTRYINDEX);
+    lua_rawgeti(L, -1, 2);
+
+    lua_pushstring(L, path);
+    lua_rawget(L, -2);
+
+    if (!lua_istable(L, -1)) {
+        reply = dbus_message_new_error_printf(msg, DBUS_ERROR_UNKNOWN_OBJECT,
+                    "No such object path '%s'",
+                    path);
+        assert(reply);
+        dbus_connection_send(conn, reply, NULL);
+        return;
+    }
 
     reply = dbus_message_new_method_return(msg);
     dbus_message_iter_init_append(reply, &msg_iter);
@@ -500,88 +515,75 @@ static void introspect_handler(DBusConnection *conn,
                  "\"http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd\">\n"
                  "<node>\n");
 
-    lua_pushlightuserdata(L, conn);
-    lua_rawget(L, LUA_REGISTRYINDEX);
-    lua_rawgeti(L, -1, 2);
+    /* Push interfaces */
+    lua_pushnil(L);
+    while (lua_next(L, -2)) {
+        if (lua_type(L, -2) != LUA_TSTRING) {
+            lua_pop(L, 1);
+            continue;
+        }
 
-    lua_pushstring(L, path);
-    lua_rawget(L, -2);
+        interface = lua_tostring(L, -2);
 
-    if (lua_istable(L, -1)) {
-        /* Push interfaces */
+        sb_addstring(&b, "  <interface name=\"");
+        sb_addstring(&b, interface);
+        sb_addstring(&b, "\">\n");
+
         lua_pushnil(L);
         while (lua_next(L, -2)) {
-            if (lua_type(L, -2) != LUA_TSTRING) {
-                lua_pop(L, 1);
-                continue;
-            }
+            const char *method = lua_tostring(L, -2);
+            const char *in_sig;
+            const char *out_sig;
 
-            interface = lua_tostring(L, -2);
-
-            printf("%s: adding interface name %s\n", __FUNCTION__, interface);
-
-            sb_addstring(&b, "  <interface name=\"");
-            sb_addstring(&b, interface);
+            sb_addstring(&b, "    <method name=\"");
+            sb_addstring(&b, method);
             sb_addstring(&b, "\">\n");
 
-            lua_pushnil(L);
-            while (lua_next(L, -2)) {
-                const char *method = lua_tostring(L, -2);
-                const char *in_sig;
-                const char *out_sig;
-
-                sb_addstring(&b, "    <method name=\"");
-                sb_addstring(&b, method);
-                sb_addstring(&b, "\">\n");
-
-                lua_rawgeti(L, -1, 1);
-                in_sig = lua_tostring(L, -1);
-                if (in_sig && in_sig[0] != '\0') {
-                    sb_addstring(&b, "      <arg type=\"");
-                    sb_addstring(&b, in_sig);
-                    sb_addstring(&b, "\" direction=\"in\"/>\n");
-                }
-                lua_pop(L, 1);
-
-                lua_rawgeti(L, -1, 2);
-                out_sig = lua_tostring(L, -1);
-                if (out_sig && out_sig[0] != '\0') {
-                    sb_addstring(&b, "      <arg type=\"");
-                    sb_addstring(&b, out_sig);
-                    sb_addstring(&b, "\" direction=\"out\"/>\n");
-                }
-                lua_pop(L, 1);
-
-                sb_addstring(&b, "    </method>\n");
-
-                lua_pop(L, 1);
+            lua_rawgeti(L, -1, 1);
+            in_sig = lua_tostring(L, -1);
+            if (in_sig && in_sig[0] != '\0') {
+                sb_addstring(&b, "      <arg type=\"");
+                sb_addstring(&b, in_sig);
+                sb_addstring(&b, "\" direction=\"in\"/>\n");
             }
+            lua_pop(L, 1);
 
-            sb_addstring(&b, "  </interface>\n");
+            lua_rawgeti(L, -1, 2);
+            out_sig = lua_tostring(L, -1);
+            if (out_sig && out_sig[0] != '\0') {
+                sb_addstring(&b, "      <arg type=\"");
+                sb_addstring(&b, out_sig);
+                sb_addstring(&b, "\" direction=\"out\"/>\n");
+            }
+            lua_pop(L, 1);
+
+            sb_addstring(&b, "    </method>\n");
 
             lua_pop(L, 1);
         }
 
-        /* Push subnodes */
-        lua_rawgeti(L, -1, 1);
-        lua_pushnil(L);
-        while(lua_next(L, -2)) {
-            sb_addstring(&b, "  <node name=\"");
-            sb_addstring(&b, lua_tostring(L, -2));
-            sb_addstring(&b, "\"/>\n");
-            lua_pop(L, 1);
-        }
+        sb_addstring(&b, "  </interface>\n");
+
         lua_pop(L, 1);
     }
-    lua_pop(L, 1);
 
-    lua_settop(L, top);
+    /* Push subnodes */
+    lua_rawgeti(L, -1, 1);
+    lua_pushnil(L);
+    while(lua_next(L, -2)) {
+        sb_addstring(&b, "  <node name=\"");
+        sb_addstring(&b, lua_tostring(L, -2));
+        sb_addstring(&b, "\"/>\n");
+        lua_pop(L, 1);
+    }
 
     sb_addstring(&b, "</node>\n");
     dbus_message_iter_append_basic(&msg_iter, DBUS_TYPE_STRING, &b.str);
     sb_free(&b);
 
     dbus_connection_send(conn, reply, NULL);
+
+    lua_settop(L, top);
 }
 
 static DBusHandlerResult standard_methods_callback(DBusConnection *conn,
