@@ -388,14 +388,14 @@ describe('Returning DBus errors', function()
    end
 
    before_each(function()
-         bus = assert(dbus[bus_name]())
-         assert(bus:own_name(service_name))
-         object = bus:object(object_path, interface_name)
-         object:add_method('Empty', '', '', function() end)
+      bus = assert(dbus[bus_name]())
+      assert(bus:own_name(service_name))
+      object = bus:object(object_path, interface_name)
+      object:add_method('Empty', '', '', function() end)
    end)
 
    after_each(function()
-         assert(bus:unown_name(service_name))
+      assert(bus:unown_name(service_name))
    end)
 
    it('Simple', function()
