@@ -6,6 +6,7 @@ local dbus = require 'easydbus'
 local loop_ev = require 'easydbus.loop_ev'
 
 local pack = table.pack or dbus.pack
+local s_format = string.format
 
 local bus_name = 'session'
 local service_name = 'spec.easydbus'
@@ -69,6 +70,70 @@ describe('Service creation', function()
 
       assert.spy(dummy_handler).was.called()
       assert.are.same(pack(), ret)
+   end)
+end)
+
+describe('Non-existent method calls handling', function()
+   local bus, object
+
+   before_each(function()
+      bus = assert(dbus[bus_name]())
+      assert(bus:own_name(service_name))
+      object = bus:object(object_path, interface_name)
+   end)
+
+   after_each(function()
+      assert(bus:unown_name(service_name))
+   end)
+
+   it('Non-existent path', function()
+      local dummy_handler = spy.new(function() end)
+      object:add_method('dummy', '', '', dummy_handler)
+
+      local ret
+      add_callback(function()
+         ret = pack(bus:call(service_name, '/spec/nopath', 'spec.nointerface', 'nonexistent'))
+         loop_stop()
+      end)
+      loop_start()
+
+      assert.are.same(pack(nil, 'org.freedesktop.DBus.Error.UnknownObject',
+                           "No such object path '/spec/nopath'"), ret)
+      assert.spy(dummy_handler).was_not_called()
+   end)
+
+   it('Non-existent interface', function()
+      local dummy_handler = spy.new(function() end)
+      object:add_method('dummy', '', '', dummy_handler)
+
+      local ret
+      add_callback(function()
+         ret = pack(bus:call(service_name, object_path, 'spec.nointerface', 'nonexistent'))
+         loop_stop()
+      end)
+      loop_start()
+
+      assert.are.same(pack(nil, 'org.freedesktop.DBus.Error.UnknownInterface',
+                           s_format("No such interface 'spec.nointerface' at object path '%s'",
+                                    object_path)), ret)
+      assert.spy(dummy_handler).was_not_called()
+   end)
+
+   it('Non-existent method', function()
+      local dummy_handler = spy.new(function() end)
+      object:add_method('dummy', '', '', dummy_handler)
+
+      local ret
+      add_callback(function()
+         ret = pack(bus:call(service_name, object_path, interface_name, 'nonexistent'))
+         loop_stop()
+      end)
+      loop_start()
+
+      assert.are.same(pack(nil, 'org.freedesktop.DBus.Error.UnknownMethod',
+                           s_format("No such method 'nonexistent' in interface '%s' at object path '%s'",
+                                    interface_name, object_path)), ret)
+      assert.spy(dummy_handler).was_not_called()
    end)
 end)
 
