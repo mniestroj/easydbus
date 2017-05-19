@@ -289,6 +289,7 @@ static DBusHandlerResult interface_method_call(DBusConnection *connection,
     lua_State *T;
     int n_args;
     int n_params;
+    DBusMessage *reply;
 
     g_debug("%s: sender=%s object_path=%s interface_name=%s method_name=%s type=%d",
             __FUNCTION__,
@@ -306,18 +307,36 @@ static DBusHandlerResult interface_method_call(DBusConnection *connection,
 
     lua_pushstring(T, path);
     lua_rawget(T, -2);
-    if (!lua_istable(T, -1))
-        luaL_error(T, "No %s in path lookup", path);
+    if (!lua_istable(T, -1)) {
+        reply = dbus_message_new_error_printf(msg, DBUS_ERROR_UNKNOWN_OBJECT,
+                    "No such object path '%s'",
+                    path);
+        assert(reply);
+        dbus_connection_send(connection, reply, NULL);
+        return DBUS_HANDLER_RESULT_HANDLED;
+    }
 
     lua_pushstring(T, interface);
     lua_rawget(T, -2);
-    if (!lua_istable(T, -1))
-        luaL_error(T, "No %s in interface lookup", interface);
+    if (!lua_istable(T, -1)) {
+        reply = dbus_message_new_error_printf(msg, DBUS_ERROR_UNKNOWN_INTERFACE,
+                    "No such interface '%s' at object path '%s'",
+                    interface, path);
+        assert(reply);
+        dbus_connection_send(connection, reply, NULL);
+        return DBUS_HANDLER_RESULT_HANDLED;
+    }
 
     lua_pushstring(T, method);
     lua_rawget(T, -2);
-    if (!lua_istable(T, -1))
-        luaL_error(T, "No %s in method lookup", method);
+    if (!lua_istable(T, -1)) {
+        reply = dbus_message_new_error_printf(msg, DBUS_ERROR_UNKNOWN_METHOD,
+                    "No such method '%s' in interface '%s' at object path '%s'",
+                    method, interface, path);
+        assert(reply);
+        dbus_connection_send(connection, reply, NULL);
+        return DBUS_HANDLER_RESULT_HANDLED;
+    }
 
     n_args = lua_rawlen(T, 5);
     unpack_table(T, 5, 3, n_args);
