@@ -85,9 +85,9 @@ static void call_callback(DBusPendingCall *pending_call, void *data)
         /* Resume Lua callback */
         ed_resume(T, 1 + push_msg(T, msg));
     } else {
-        lua_pushnil(T);
         dbus_error_init(&error);
         dbus_set_error_from_message(&error, msg);
+        lua_pushnil(T);
         lua_pushstring(T, error.name);
         lua_pushstring(T, error.message);
         dbus_error_free(&error);
