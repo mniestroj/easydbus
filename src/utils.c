@@ -10,8 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static DBusError error;
-
 static int push_iter(DBusMessageIter *msg_iter, lua_State *L)
 {
     int msg_type = dbus_message_iter_get_arg_type(msg_iter);
@@ -156,12 +154,16 @@ int push_msg(lua_State *L, DBusMessage *msg)
     int num = 0;
 
     if (dbus_message_get_type(msg) == DBUS_MESSAGE_TYPE_ERROR) {
-        lua_pushnil(L);
+        DBusError error;
+
+        dbus_error_init(&error);
         dbus_set_error_from_message(&error, msg);
+        lua_pushnil(L);
+        lua_pushstring(L, error.name);
         lua_pushstring(L, error.message);
         dbus_error_free(&error);
         dbus_message_unref(msg);
-        return 2;
+        return 3;
     }
 
     if (!dbus_message_iter_init(msg, &msg_iter))
