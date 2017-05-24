@@ -132,7 +132,7 @@ static int push_iter(DBusMessageIter *msg_iter, lua_State *L)
     case DBUS_TYPE_UNIX_FD: {
         int val;
         dbus_message_iter_get_basic(msg_iter, &val);
-        lua_pushinteger(L, val);
+        ed_newfd(L, val);
         break;
     }
     case DBUS_TYPE_VARIANT: {
