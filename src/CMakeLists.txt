@@ -5,7 +5,7 @@
 #
 
 add_library(easydbus_core MODULE
-    bus.c compat.c easydbus_lua.c utils.c)
+    bus.c compat.c easydbus_lua.c types.c utils.c)
 
 find_package(GLIB COMPONENTS gio gio-unix gobject REQUIRED)
 

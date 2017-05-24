@@ -23,5 +23,8 @@ void luaL_setfuncs(lua_State *L, const luaL_Reg *l, int nup);
 #else
 
 #define ed_resume(L, args) lua_resume(L, NULL, args)
+#ifndef lua_equal
+#define lua_equal(L,idx1,idx2)          lua_compare(L,(idx1),(idx2),LUA_OPEQ)
+#endif
 
 #endif

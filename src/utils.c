@@ -5,6 +5,7 @@
  */
 
 #include "compat.h"
+#include "types.h"
 #include "utils.h"
 
 #include <stdlib.h>

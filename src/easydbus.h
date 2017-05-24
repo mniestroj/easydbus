@@ -59,7 +59,6 @@ struct easydbus_state {
     struct easydbus_external_mainloop external_mainloop;
 };
 
-int easydbus_is_dbus_type(lua_State *L, int index);
 void easydbus_enable_ios(struct ev_loop *loop, struct easydbus_state *state);
 void easydbus_disable_ios(struct ev_loop *loop, struct easydbus_state *state);
 void easydbus_enable_external_watches(lua_State *L, struct easydbus_state *state);
