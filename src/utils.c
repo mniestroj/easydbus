@@ -387,6 +387,8 @@ static void to_iter(DBusMessageIter *msg_iter, lua_State *L, int index, DBusSign
             break;
         }
         case DBUS_TYPE_UNIX_FD: {
+            /* TODO: check if dbus_message_iter_append_basic() succeeded.
+             * It may not succeed in case of invalid file descritor */
             int val = lua_tointeger(L, index);
             dbus_message_iter_append_basic(msg_iter, DBUS_TYPE_UNIX_FD, &val);
             break;
