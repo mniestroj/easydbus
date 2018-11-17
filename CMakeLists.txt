@@ -5,7 +5,7 @@
 #
 
 cmake_minimum_required(VERSION 2.6)
-project(easydbus)
+project(easydbus C)
 
 add_definitions("-Wall -Wextra -Wno-unused-parameter")
 set(CMAKE_C_FLAGS_RELEASE "-O2")
