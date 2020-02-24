@@ -734,7 +734,11 @@ static void signal_callback(GDBusConnection *conn,
         lua_rawgeti(L, 1, i);
     }
 
-    ret = ed_resume(L, n_args + push_tuple(L, parameters, NULL) - 1);
+    n_args += push_tuple(L, parameters, NULL) - 1;
+    lua_pushstring(L, object_name);
+    n_args++;
+
+    ret = ed_resume(L, n_args);
     if (ret && ret != LUA_YIELD)
         g_warning("signal handler error: %s", lua_tostring(L, -1));
 
