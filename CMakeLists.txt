@@ -4,7 +4,7 @@
 # SPDX-License-Identifier: MIT
 #
 
-cmake_minimum_required(VERSION 2.6)
+cmake_minimum_required(VERSION 3.5)
 project(easydbus C)
 
 add_definitions("-Wall -Wextra -Wno-unused-parameter")
