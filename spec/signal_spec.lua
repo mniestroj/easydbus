@@ -29,7 +29,7 @@ describe('Service signal emit', function()
          bus:unown_name(owner_id)
 
          assert.spy(handler).was.called()
-         assert.are.same(pack(), args)
+         assert.are.same(pack(object_path), args)
       end
    end
 
