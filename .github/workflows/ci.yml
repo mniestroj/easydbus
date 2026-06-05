@@ -6,8 +6,8 @@ on:
 
 jobs:
   build:
-    name: Lua ${{ matrix.lua }}
-    runs-on: ubuntu-latest
+    name: Lua ${{ matrix.lua }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:
@@ -16,6 +16,9 @@ jobs:
           - "5.3.6"
           - "5.4.7"
           - "5.5.0"
+        arch:
+          - amd64
+          - arm64
     steps:
       - uses: actions/checkout@v4
 
