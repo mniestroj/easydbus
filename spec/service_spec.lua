@@ -2,6 +2,14 @@
 
 require 'busted.runner'()
 
+if _VERSION == 'Lua 5.1' then
+   describe('Service tests', function()
+      pending('async bus:call yields across a C-call boundary, '
+              .. 'which requires lua_yieldk (Lua 5.2+)')
+   end)
+   return
+end
+
 local dbus = require 'easydbus'
 
 local pack = table.pack or dbus.pack
