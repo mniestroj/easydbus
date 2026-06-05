@@ -10,6 +10,11 @@
 #include "lauxlib.h"
 #include "lualib.h"
 
+#if LUA_VERSION_NUM < 502
+#define LUA_OPEQ 0
+#define lua_compare(L, idx1, idx2, op) lua_equal(L, idx1, idx2)
+#endif
+
 #if LUA_VERSION_NUM < 503
 
 #define ed_resume(L, args) lua_resume(L, args)

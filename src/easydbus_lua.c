@@ -39,7 +39,7 @@ int easydbus_is_dbus_type(lua_State *L, int index)
     lua_pushlightuserdata(L, TYPE_MT);
     lua_rawget(L, LUA_REGISTRYINDEX);
 
-    if (!lua_equal(L, -1, -2))
+    if (!lua_compare(L, -1, -2, LUA_OPEQ))
         ret = 0;
 
     lua_pop(L, 2);
