@@ -9,7 +9,7 @@ add_library(easydbus_core MODULE
 
 find_package(GLIB COMPONENTS gio gio-unix gobject REQUIRED)
 
-find_package(Lua)
+find_package(Lua REQUIRED)
 
 include_directories(
     ${LUA_INCLUDE_DIR}
