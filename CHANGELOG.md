@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-05
+
+### Fixed
+
+- LuaJIT build regression introduced in 0.2.0: `find_package(Lua REQUIRED)`
+  aborted at configure time when `LUA_LIBRARIES` was not found, which is
+  the case for LuaJIT (its library is `libluajit-5.1`, not `liblua-5.1`).
+
 ## [0.2.0] - 2026-06-05
 
 ### Added
