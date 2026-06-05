@@ -23,8 +23,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake pkg-config \
-            libglib2.0-dev libreadline-dev
+            build-essential pkg-config python3-pip \
+            libglib2.0-dev libreadline-dev dbus
+
+      - name: Install up-to-date CMake
+        run: sudo pip3 install --break-system-packages cmake
 
       - name: Build and install Lua ${{ matrix.lua }}
         run: |
@@ -44,3 +47,18 @@ jobs:
 
       - name: Load module under Lua
         run: lua -e "require('easydbus'); print('easydbus loaded under Lua ' .. _VERSION)"
+
+      - name: Build and install LuaRocks
+        run: |
+          curl -sSfL https://luarocks.org/releases/luarocks-3.13.0.tar.gz | tar xz
+          cd luarocks-3.13.0
+          LUA_MM=$(echo "${{ matrix.lua }}" | cut -d. -f1,2)
+          ./configure --with-lua=/usr/local --lua-version="$LUA_MM"
+          make
+          sudo make install
+
+      - name: Install busted
+        run: sudo luarocks install busted
+
+      - name: Run spec tests
+        run: dbus-run-session -- busted spec/
