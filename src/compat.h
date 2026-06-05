@@ -20,8 +20,16 @@
 int lua_isinteger (lua_State *L, int idx);
 void luaL_setfuncs(lua_State *L, const luaL_Reg *l, int nup);
 
-#else
+#elif LUA_VERSION_NUM < 504
 
 #define ed_resume(L, args) lua_resume(L, NULL, args)
+
+#else
+
+static inline int ed_resume(lua_State *L, int args)
+{
+    int nres;
+    return lua_resume(L, NULL, args, &nres);
+}
 
 #endif
