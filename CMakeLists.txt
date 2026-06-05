@@ -10,6 +10,4 @@ project(easydbus C)
 set(CMAKE_C_FLAGS_RELEASE "-O2")
 set(CMAKE_C_FLAGS_DEBUG "-O0 -g3")
 
-set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
-
 add_subdirectory(src)

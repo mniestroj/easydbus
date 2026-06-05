@@ -10,21 +10,14 @@ add_library(easydbus_core MODULE
 target_compile_options(easydbus_core PRIVATE
     -Wall -Wextra -Wno-unused-parameter)
 
-find_package(GLIB COMPONENTS gio gio-unix gobject REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET
+    glib-2.0 gobject-2.0 gio-2.0 gio-unix-2.0)
 
 find_package(Lua REQUIRED)
 
-include_directories(
-    ${LUA_INCLUDE_DIR}
-    ${GLIB_INCLUDE_DIRS}
-    ${GIO_UNIX_INCLUDE_DIRS}
-)
-
-target_link_libraries(easydbus_core LINK_PUBLIC
-    ${GLIB_LIBRARIES}
-    ${GLIB_GIO_LIBRARIES}
-    ${GLIB_GOBJECT_LIBRARIES}
-)
+target_include_directories(easydbus_core PRIVATE ${LUA_INCLUDE_DIR})
+target_link_libraries(easydbus_core PRIVATE PkgConfig::GLIB)
 
 set(C_DEST lib/lua/${LUA_VERSION_MAJOR}.${LUA_VERSION_MINOR})
 set(LUA_DEST share/lua/${LUA_VERSION_MAJOR}.${LUA_VERSION_MINOR})
