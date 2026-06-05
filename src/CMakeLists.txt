@@ -7,6 +7,9 @@
 add_library(easydbus_core MODULE
     bus.c compat.c easydbus_lua.c poll.c utils.c)
 
+target_compile_options(easydbus_core PRIVATE
+    -Wall -Wextra -Wno-unused-parameter)
+
 find_package(GLIB COMPONENTS gio gio-unix gobject REQUIRED)
 
 find_package(Lua REQUIRED)

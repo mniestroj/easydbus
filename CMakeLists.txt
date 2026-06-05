@@ -7,7 +7,6 @@
 cmake_minimum_required(VERSION 3.10...4.3)
 project(easydbus C)
 
-add_definitions("-Wall -Wextra -Wno-unused-parameter")
 set(CMAKE_C_FLAGS_RELEASE "-O2")
 set(CMAKE_C_FLAGS_DEBUG "-O0 -g3")
 
