@@ -749,7 +749,9 @@ static int bus_subscribe(lua_State *L)
 {
     struct easydbus_state *state = lua_touserdata(L, lua_upvalueindex(1));
     GDBusConnection *conn = get_conn(L, 1);
-    const char *sender = lua_tostring(L, 2);
+    const char *sender = NULL;
+    if (lua_isnoneornil(L, 2))
+	    sender = lua_tostring(L, 2);
     const char *object_path = lua_tostring(L, 3);
     const char *interface_name = lua_tostring(L, 4);
     const char *signal_name = lua_tostring(L, 5);
